@@ -1,0 +1,6 @@
+*.stl
+*.pa*
+*.fly2
+*.iob
+*.csv
+.DS_STORE
