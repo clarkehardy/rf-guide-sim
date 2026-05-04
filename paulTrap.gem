@@ -1,31 +1,40 @@
 -- paulTrap.gem
--- Linear Paul trap: 2 rod pair electrodes + end caps + gap rings
--- Left rods: 1 piece each (combined). Right rods: 1 piece each.
+-- Linear Paul trap RF guide + perpendicular Paul trap for particle retrapping.
 --
--- Potential array:
---   GEM x = Fusion X + 7.0   (horizontal transverse, 14 mm wide)
---   GEM y = Fusion Y - 12.05 (vertical transverse,   14 mm tall)
---   GEM z = Fusion Z + 131.0 (trap axis,            382 mm long)
---   Grid spacing: 0.5 mm (fast testing) — change dx to 0.15 for production
---
--- Electrodes:
+-- Main trap (axis along Z):
 --   1 = rod pair 1, left  (+RF): top-left + bottom-right left rods
 --   2 = rod pair 2, left  (-RF): top-right + bottom-left left rods
---   3 = left end cap   (DC, electrode 3 in Lua / V_endcap in CSV)
+--   3 = left end cap   (DC, V_endcap in CSV)
 --   4 = rod pair 1, right (+RF): top-left + bottom-right right rods
 --   5 = rod pair 2, right (-RF): top-right + bottom-left right rods
---   6 = ring electrode, left  (DC, near gap left edge)
---   7 = ring electrode, right (DC, near gap right edge)
---   8 = right end cap  (DC, electrode 8 in Lua / V_endcap_R in CSV)
+--   6 = ring electrode, left  (DC, V_ring_L in CSV)
+--   7 = ring electrode, right (DC, V_ring_R in CSV)
+--   8 = right end cap  (DC, V_endcap_R in CSV)
+--
+-- Perpendicular trap (axis along X):
+--   9  = trap rod pair 1 (+RF2): trap_rod_TL + trap_rod_BR
+--   10 = trap rod pair 2 (-RF2): trap_rod_TR + trap_rod_BL
+--   11 = trapping_lens_holder  (DC, V_trap_lens in CSV)
+--   12 = collection_lens_holder (DC, V_coll_lens in CSV)
+--   13 = trapping_lens   (glass dielectric — see PLACEHOLDER note)
+--   14 = collection_lens (glass dielectric — see PLACEHOLDER note)
+--
+-- Coordinate transform:
+--   GEM x = Fusion X + 25.0
+--   GEM y = Fusion Y +  8.0
+--   GEM z = Fusion Z + 132.0
+--   PA extent (Fusion): X [-25, 34] mm  Y [-8, 37] mm  Z [-132, 295] mm
+--   Grid spacing: 0.5 mm (fast testing) — change dx to 0.15 mm for production
 
--- Absolute path to project folder (confirmed via check_dir.lua)
 local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\"
 
-pa_define{14*mm, 14*mm, 382*mm, 'planar', dx=0.5, surface='fractional',
+pa_define{59*mm, 45*mm, 427*mm, 'planar', dx=0.5, surface='fractional',
           filename="paulTrap.pa0"}
 
-locate(7, -12.05, 131) {
--- Seed points are in Fusion world coordinates (mm).
+locate(25, 8, 132) {
+-- All seed points are in Fusion world coordinates (mm).
+
+  -- ── Main Paul trap (axis along Z) ─────────────────────────────────────────
 
   e(1) {  -- rod pair 1, LEFT, +RF (top-left = P1_L1, bottom-right = P1_L2)
     stl(D.."rod_P1_L1.stl",  -2.1082, 21.1582, -20.6470)
@@ -42,13 +51,13 @@ locate(7, -12.05, 131) {
   }
 
   e(4) {  -- rod pair 1, RIGHT, +RF (top-left = P1_R1, bottom-right = P1_R2)
-    stl(D.."rod_P1_R1.stl",   -2.1082, 21.1582, 169.2021)
+    stl(D.."rod_P1_R1.stl",  -2.1082, 21.1582, 169.2021)
     stl(D.."rod_P1_R2.stl",   2.1082, 16.9672, 169.2021)
   }
 
   e(5) {  -- rod pair 2, RIGHT, -RF (top-right = P2_R1, bottom-left = P2_R2)
     stl(D.."rod_P2_R1.stl",   2.1082, 21.1582, 169.2021)
-    stl(D.."rod_P2_R2.stl",   -2.1082, 16.9672, 169.2021)
+    stl(D.."rod_P2_R2.stl",  -2.1082, 16.9672, 169.2021)
   }
 
   e(6) {  -- ring electrode, left (DC, near gap left edge)
@@ -61,6 +70,48 @@ locate(7, -12.05, 131) {
 
   e(8) {  -- right end cap
     stl(D.."endcap_R.stl",  0.00, 19.06, -81.2419)
+  }
+
+  -- ── Perpendicular Paul trap (axis along X) ─────────────────────────────────
+  -- Quadrupole rods paired diagonally in the Y-Z plane.
+  -- Pair 1 (+RF2): top-left-Y/left-Z + bottom-right-Y/right-Z (TL + BR)
+  -- Pair 2 (-RF2): top-right-Y/right-Z + bottom-left-Y/left-Z (TR + BL)
+
+  e(9) {  -- trap rod pair 1, +RF2: TL + BR
+    stl(D.."trap_rod_TL.stl",  15.396, 25.914, 269.656)
+    stl(D.."trap_rod_BR.stl",  15.396, 13.214, 282.356)
+  }
+
+  e(10) {  -- trap rod pair 2, -RF2: TR + BL
+    stl(D.."trap_rod_TR.stl",  15.396, 25.914, 282.356)
+    stl(D.."trap_rod_BL.stl",  15.396, 13.214, 269.656)
+  }
+
+  e(11) {  -- trapping_lens_holder: DC electrode (V_trap_lens in CSV)
+    stl(D.."trapping_lens_holder.stl",  4.830, 13.913, 275.994)
+  }
+
+  e(12) {  -- collection_lens_holder: DC electrode (V_coll_lens in CSV)
+    stl(D.."collection_lens_holder.stl",  -6.073, 15.127, 275.969)
+  }
+
+  -- ── Dielectric lenses ───────────────────────────────────────────────────────
+  -- PLACEHOLDER: The lenses are glass dielectrics (ε_r = EPSILON_GLASS).
+  -- SIMION does not apply dielectric boundary conditions by default.
+  -- To enable proper dielectric treatment:
+  --   Option A (SIMION 8.2+ dielectric mode): change e(13) to
+  --       e(13, dielectric{epsilon=EPSILON_GLASS}) { stl(...) }
+  --     and add 'dielectric=1' to the pa_define line above.
+  --   Option B: implement surface-charge distribution via a Lua user program.
+  -- Until then, these definitions include the lens geometry for particle
+  -- collision detection but do not modify the electric field.
+
+  e(13) {  -- trapping_lens (glass, ε_r = EPSILON_GLASS — see PLACEHOLDER above)
+    stl(D.."trapping_lens.stl",  4.042, 19.586, 275.984)
+  }
+
+  e(14) {  -- collection_lens (glass, ε_r = EPSILON_GLASS — see PLACEHOLDER above)
+    stl(D.."collection_lens.stl",  -6.582, 19.530, 275.933)
   }
 
 }

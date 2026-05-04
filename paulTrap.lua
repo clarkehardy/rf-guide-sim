@@ -1,5 +1,5 @@
 -- paulTrap.lua
--- User program for linear Paul trap RF guide simulation.
+-- User program for linear Paul trap RF guide + perpendicular retrapping trap.
 -- Physics: RF trapping (fast adjust), Epstein drag (free molecular), gravity.
 
 simion.workbench_program()
@@ -46,10 +46,16 @@ adjustable record_stride = 20
 adjustable run_number = 1
 
 -- ── RF defaults (overridden by voltages file at run start) ───────────────────
--- f_RF and V0 are now written by generate_voltages.py.
--- These values are used only if the voltage file is missing or has no metadata.
-local _rf_omega   = 2 * math.pi * 4900 * 1e-6  -- rad/us  (default 4900 Hz)
-local _V0_default = 100.0                        -- V, fallback constant amplitude
+-- f_RF / f_RF2 and amplitudes are written by generate_voltages.py.
+-- These fallback values are used only if the voltage file is missing or has no metadata.
+local _rf_omega   = 2 * math.pi * 4900 * 1e-6   -- rad/us  (default 4900 Hz, main trap)
+local _V0_default = 100.0                         -- V, fallback amplitude main trap
+
+-- PLACEHOLDER: Set f_RF2 to the correct RF frequency for the perpendicular trap.
+-- The value below is used only as a fallback; the real value comes from f_RF2_Hz
+-- in the voltages CSV metadata comment.
+local _rf_omega_2   = 2 * math.pi * 4900 * 1e-6  -- rad/us  (PLACEHOLDER — same as main trap)
+local _V0_2_default = 0.0                          -- V, fallback amplitude perp trap
 
 -- ── Voltage schedule file ────────────────────────────────────────────────────
 -- DC voltages for electrodes 3, 6, 7, 8 and the RF amplitude envelope are read
@@ -64,7 +70,11 @@ adjustable voltage_file_number = 1
 local g_simion = 9.81e-9  -- mm/us²
 
 -- ── Voltage schedule (populated from file) ───────────────────────────────────
+-- Main trap DC: _v3=endcap_L, _v6=ring_L, _v7=ring_R, _v8=endcap_R
+-- Perp trap DC: _v11=trapping_lens_holder, _v12=collection_lens_holder
+-- RF envelopes: _v_rf=main trap, _v_rf2=perp trap
 local _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
+local _v11, _v12, _v_rf2 = {}, {}, {}
 
 local function _interp(t_tbl, v_tbl, t)
   if #t_tbl == 0 then return 0.0 end
@@ -81,31 +91,37 @@ end
 
 -- ── Trajectory recording ─────────────────────────────────────────────────────
 -- Positions written in Fusion world coordinates (same frame as the STL files).
--- GEM → Fusion:  X_f = X_gem - 7,  Y_f = Y_gem + 12.05,  Z_f = Z_gem - 131
+-- GEM → Fusion:  X_f = X_gem - 25,  Y_f = Y_gem - 8,  Z_f = Z_gem - 132
 local _traj_file  = nil
 local _traj_step  = 0   -- per-ion step counter for stride
 
 function segment.initialize_run()
   -- Clear all schedule tables so re-runs don't accumulate rows
   _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
+  _v11, _v12, _v_rf2 = {}, {}, {}
 
   do
     local vpath = D .. "voltages_" .. math.floor(voltage_file_number) .. ".csv"
     local vf = io.open(vpath, "r")
     if vf then
-      -- First line: may be metadata comment "# f_RF_Hz=XXXX" or the CSV header
-      local first = vf:read("*l")
+      -- Read all leading metadata comment lines (lines starting with '#')
+      -- then the CSV header line.
+      local line = vf:read("*l")
       local header_line
-      if first and first:sub(1, 1) == "#" then
-        local freq = first:match("f_RF_Hz=([%d%.eE%+%-]+)")
+      while line and line:sub(1, 1) == "#" do
+        local freq = line:match("f_RF_Hz=([%d%.eE%+%-]+)")
         if freq then
           _rf_omega = 2 * math.pi * tonumber(freq) * 1e-6
-          simion.print("RF: f = " .. freq .. " Hz\n")
+          simion.print("RF:  f = " .. freq .. " Hz\n")
         end
-        header_line = vf:read("*l")
-      else
-        header_line = first
+        local freq2 = line:match("f_RF2_Hz=([%d%.eE%+%-]+)")
+        if freq2 then
+          _rf_omega_2 = 2 * math.pi * tonumber(freq2) * 1e-6
+          simion.print("RF2: f = " .. freq2 .. " Hz\n")
+        end
+        line = vf:read("*l")
       end
+      header_line = line
 
       -- Build column-name → index map from the CSV header
       local col_idx = {}
@@ -124,6 +140,9 @@ function segment.initialize_run()
         ["V_ring_L"]   = _v6,
         ["V_ring_R"]   = _v7,
         ["V_RF"]       = _v_rf,
+        ["V_RF2"]      = _v_rf2,
+        ["V_trap_lens"] = _v11,
+        ["V_coll_lens"] = _v12,
       }
 
       for line in vf:lines() do
@@ -157,6 +176,9 @@ function segment.initialize_run()
       _ch("V_ring_L",   _v6)
       _ch("V_ring_R",   _v7)
       _ch("V_RF",       _v_rf)
+      _ch("V_RF2",      _v_rf2)
+      _ch("V_trap_lens", _v11)
+      _ch("V_coll_lens", _v12)
     else
       simion.print("WARNING: voltage file not found: " .. vpath .. "\n")
     end
@@ -186,16 +208,33 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 function segment.fast_adjust()
   local t   = ion_time_of_flight
+
+  -- Main trap RF (electrodes 1, 2, 4, 5)
   local amp = #_v_rf > 0 and _interp(_vt, _v_rf, t) or _V0_default
   local V_RF = amp * math.cos(_rf_omega * t)
   adj_elect[1] =  V_RF    -- rod pair 1, left   (+RF phase)
   adj_elect[2] = -V_RF    -- rod pair 2, left   (-RF phase)
   adj_elect[4] =  V_RF    -- rod pair 1, right  (+RF phase)
   adj_elect[5] = -V_RF    -- rod pair 2, right  (-RF phase)
+
+  -- Main trap DC (electrodes 3, 6, 7, 8)
   if #_v3  > 0 then adj_elect[3] = _interp(_vt, _v3,  t) end
   if #_v6  > 0 then adj_elect[6] = _interp(_vt, _v6,  t) end
   if #_v7  > 0 then adj_elect[7] = _interp(_vt, _v7,  t) end
   if #_v8  > 0 then adj_elect[8] = _interp(_vt, _v8,  t) end
+
+  -- Perpendicular trap RF (electrodes 9, 10)
+  local amp2 = #_v_rf2 > 0 and _interp(_vt, _v_rf2, t) or _V0_2_default
+  local V_RF2 = amp2 * math.cos(_rf_omega_2 * t)
+  adj_elect[9]  =  V_RF2   -- trap rod pair 1, TL+BR  (+RF2 phase)
+  adj_elect[10] = -V_RF2   -- trap rod pair 2, TR+BL  (-RF2 phase)
+
+  -- Perpendicular trap DC (electrodes 11, 12)
+  if #_v11 > 0 then adj_elect[11] = _interp(_vt, _v11, t) end
+  if #_v12 > 0 then adj_elect[12] = _interp(_vt, _v12, t) end
+
+  -- Electrodes 13, 14 (glass lenses) are at 0 V (floating/grounded).
+  -- Update to apply surface charges here if dielectric treatment is implemented.
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -235,9 +274,9 @@ function segment.accel_adjust()
       _traj_file:write(string.format("%d,%.4f,%.5f,%.5f,%.5f\n",
         ion_number,
         ion_time_of_flight,
-        ion_px_mm - 7.0,
-        ion_py_mm + 12.05,
-        ion_pz_mm - 131.0))
+        ion_px_mm - 25.0,
+        ion_py_mm - 8.0,
+        ion_pz_mm - 132.0))
     end
   end
 end
