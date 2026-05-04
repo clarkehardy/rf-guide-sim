@@ -228,13 +228,14 @@ function segment.fast_adjust()
   if #_v8  > 0 then adj_elect[8] = _interp(_vt, _v8,  t) end
 
   -- Perpendicular trap RF + DC bias (electrodes 9, 10)
-  -- Pair 1: +(V_RF2·cos + V_DC2),  Pair 2: -(V_RF2·cos + V_DC2)
-  -- Mathieu parameters: q = 4eV_RF2/(mω²r₀²),  a = 8eV_DC2/(mω²r₀²)
+  -- Common-mode DC: both pairs carry +V_DC2, so the quadrupole RF field is unchanged.
+  -- V_DC2 raises the mean rod potential, creating a potential hill for incoming particles.
+  -- Pair 1: +V_RF2·cos + V_DC2,  Pair 2: -V_RF2·cos + V_DC2
   local amp2 = #_v_rf2 > 0 and _interp(_vt, _v_rf2, t) or _V0_2_default
   local dc2  = #_v_dc2  > 0 and _interp(_vt, _v_dc2,  t) or 0.0
-  local V_RF2 = amp2 * math.cos(_rf_omega_2 * t) + dc2
-  adj_elect[9]  =  V_RF2   -- trap rod pair 1, TL+BR  (+RF2+DC phase)
-  adj_elect[10] = -V_RF2   -- trap rod pair 2, TR+BL  (-RF2-DC phase)
+  local V_RF2 = amp2 * math.cos(_rf_omega_2 * t)
+  adj_elect[9]  =  V_RF2 + dc2  -- trap rod pair 1, TL+BR
+  adj_elect[10] = -V_RF2 + dc2  -- trap rod pair 2, TR+BL
 
   -- Perpendicular trap DC (electrodes 11, 12)
   if #_v11 > 0 then adj_elect[11] = _interp(_vt, _v11, t) end

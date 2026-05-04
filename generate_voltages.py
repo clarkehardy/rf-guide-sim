@@ -18,7 +18,9 @@ Electrodes controlled here (main Paul trap, axis along Z):
     V_ring_brake –  electrode 13  (braking ring)
 
 Electrodes controlled here (perpendicular trap, axis along X):
-    V_DC2       –  electrodes 9, 10  (rod pair DC bias: +V_DC2 on pair 1, −V_DC2 on pair 2)
+    V_DC2       –  electrodes 9, 10  (common-mode rod bias: +V_DC2 on both pairs;
+                    RF quadrupole field unchanged — raises mean rod potential
+                    to decelerate fast incoming particles)
     V_trap_lens –  electrode 11  (trapping_lens_holder)
     V_coll_lens –  electrode 12  (collection_lens_holder)
 
@@ -27,7 +29,6 @@ RF frequency and amplitude envelopes:
     V_RF       –  main trap zero-to-peak amplitude vs time
     f_RF2      –  perpendicular trap carrier frequency (Hz) [PLACEHOLDER]
     V_RF2      –  perpendicular trap zero-to-peak amplitude vs time [PLACEHOLDER]
-    V_DC2      –  perpendicular trap rod DC bias (Mathieu a parameter)
 """
 
 import numpy as np
@@ -93,15 +94,15 @@ V_ring_brake = 300 * np.ones_like(times)   # edit to apply braking pulse
 # in the perpendicular trap.  Currently 0 V (rods are inactive).
 V_RF2 = 150 * np.ones_like(times)   # PLACEHOLDER — set to trapping amplitude
 
-# DC bias applied symmetrically to rod pairs (+V_DC2 on pair 1, −V_DC2 on pair 2).
-# Sets Mathieu stability parameter a = 8eV_DC2 / (m ω² r₀²).  Zero = pure RF trap.
-V_DC2 = np.zeros_like(times)
+# Common-mode DC bias: +V_DC2 applied to both rod pairs, leaving the RF quadrupole
+# field unchanged.  Raises the mean rod potential to decelerate incoming particles.
+V_DC2 = 70 * np.ones_like(times)
 
 # ── Perpendicular trap DC voltages ────────────────────────────────────────────
 # PLACEHOLDER: Set axial confinement voltages for the perpendicular trap.
 # V_trap_lens (electrode 11) and V_coll_lens (electrode 12) act as end caps.
-V_trap_lens = 120 * np.ones_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
-V_coll_lens = 120 * np.ones_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
+V_trap_lens = 50 * np.ones_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
+V_coll_lens = 50 * np.ones_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
 
 SCHEDULE = list(np.vstack((
     times,
