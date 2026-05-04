@@ -7,8 +7,8 @@ It is consumed by refine_with_dielectric.lua, which re-refines every electrode
 PA with it so that the glass lenses correctly modify the electric field.
 
 Grid conventions (must match paulTrap.gem):
-  Electric PA dimensions : NX=119, NY=91, NZ=855  (pa_define 59×45×427 mm, dx=0.5)
-  Dielectric PA dimensions: NX-1, NY-1, NZ-1 = 118×90×854
+  Electric PA dimensions : NX=131, NY=91, NZ=855  (pa_define 65×45×427 mm, dx=0.5)
+  Dielectric PA dimensions: NX-1, NY-1, NZ-1 = 130×90×854
   Cell (i,j,k) centre (Fusion mm) :
       x = (i + 0.5)*DX + FUSION_X_MIN
       y = (j + 0.5)*DX + FUSION_Y_MIN
@@ -52,7 +52,7 @@ LENS_STLS = [
 ]
 
 # PA grid — must match pa_define in paulTrap.gem
-NX, NY, NZ = 119, 91, 855    # electric PA grid points
+NX, NY, NZ = 131, 91, 855    # electric PA grid points  (65 mm / 0.5 + 1)
 DX = 0.5                      # mm
 
 # GEM → Fusion offset: Fusion = GEM_coord - (tx, ty, tz)

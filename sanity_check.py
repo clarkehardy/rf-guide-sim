@@ -1,195 +1,300 @@
 """
-sanity_check.py -- GEM/STL geometry verification for paulTrap.gem
-Checks:
-  1. Bounding boxes of each STL in Fusion world coordinates
-  2. Whether each GEM seed point is inside its STL body (ray casting)
-  3. Whether all geometry falls within the PA bounds
-  4. Rod radii and transverse axis positions
-  5. End cap seed point plausibility
+sanity_check.py  –  GEM/STL geometry verification for paulTrap.gem
+
+Checks for every STL referenced in the GEM (and for the dielectric lenses):
+  1. Bounding box in Fusion world coordinates
+  2. Whether the GEM seed point lies inside the mesh (ray-casting parity test)
+  3. Whether the mesh falls within the PA bounds
+  4. Per-group geometry summaries: main-trap rod axes, perp-trap rod axes,
+     ring electrode Z positions, end-cap Z positions, lens holder positions
+
+Electrodes checked
+  1  rod_P1_L1, rod_P1_L2        main trap rod pair 1 (+RF)
+  2  rod_P2_L1, rod_P2_L2        main trap rod pair 2 (−RF)
+  3  endcap_L                    left end cap
+  4  rod_P1_R1, rod_P1_R2        right rod pair 1 (+RF)
+  5  rod_P2_R1, rod_P2_R2        right rod pair 2 (−RF)
+  6  ring_L                      ring electrode, left
+  7  ring_R                      ring electrode, right
+  8  endcap_R                    right end cap
+  9  trap_rod_TL, trap_rod_BR    perp-trap rod pair 1 (+RF2)
+ 10  trap_rod_TR, trap_rod_BL    perp-trap rod pair 2 (−RF2)
+ 11  trapping_lens_holder        perp-trap DC electrode
+ 12  collection_lens_holder      perp-trap DC electrode
+  –  trapping_lens               glass dielectric (not in electric PA)
+  –  collection_lens             glass dielectric (not in electric PA)
 """
 
 import struct, math, os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-# PA bounds in Fusion world coordinates (derived from GEM locate + pa_define)
-# pa_define: 14x14x382 mm at dx=0.15, with locate(7, -12.05, 131)
-# GEM x = Fusion X + 7   →  Fusion X ∈ [-7, 7]
-# GEM y = Fusion Y - 12.05 → Fusion Y ∈ [12.05, 26.05]
-# GEM z = Fusion Z + 131  →  Fusion Z ∈ [-131, 251]
-PA_X = (-7.0, 7.0)
-PA_Y = (12.05, 26.05)
-PA_Z = (-131.0, 251.0)
+# ── PA bounds in Fusion world coordinates ─────────────────────────────────────
+# pa_define{59×45×427 mm, dx=0.5}, locate(25, 8, 132)
+# Fusion = GEM - (25, 8, 132)
+PA_X = (-25.0,  40.0)
+PA_Y = ( -8.0,  37.0)
+PA_Z = (-132.0, 295.0)
 
-# Seed points from GEM file (Fusion world coords, i.e. values passed to stl() before locate())
-SEEDS = {
-    "rod_P1_L1a": ((-2.1082, 21.1582, -87.4141), 1),
-    "rod_P1_L1b": ((-2.1082, 21.1582,   8.5471), 1),
-    "rod_P1_L2a": (( 2.1082, 16.9672, -87.4141), 1),
-    "rod_P1_L2b": (( 2.1082, 16.9672,   8.5471), 1),
-    "rod_P1_R1":  ((-2.1082, 21.1582, 169.2021), 1),
-    "rod_P1_R2":  (( 2.1082, 16.9672, 169.2021), 1),
-    "rod_P2_L1a": (( 2.1082, 21.1582, -87.4141), 2),
-    "rod_P2_L1b": (( 2.1082, 21.1582,   8.5471), 2),
-    "rod_P2_L2a": ((-2.1082, 16.9672, -87.4141), 2),
-    "rod_P2_L2b": ((-2.1082, 16.9672,   8.5471), 2),
-    "rod_P2_R1":  (( 2.1082, 21.1582, 169.2021), 2),
-    "rod_P2_R2":  ((-2.1082, 16.9672, 169.2021), 2),
-    "endcap_L":   (( 0.0000, 19.0500, 109.2200), 3),
-}
+# ── Electrodes: (stl_stem, seed_xyz, electrode_number, short_description) ─────
+# Seed points are Fusion world coordinates, exactly as written in paulTrap.gem.
+# Electrode 0 = not in the electric PA (dielectric only).
+ELECTRODES = [
+    # Main Paul trap — axis along Z
+    ("rod_P1_L1",             (-2.1082, 21.1582,  -20.6470),  1, "rod pair 1 left  +RF"),
+    ("rod_P1_L2",             ( 2.1082, 16.9672,  -20.6470),  1, "rod pair 1 left  +RF"),
+    ("rod_P2_L1",             ( 2.1082, 21.1582,  -20.6470),  2, "rod pair 2 left  −RF"),
+    ("rod_P2_L2",             (-2.1082, 16.9672,  -20.6470),  2, "rod pair 2 left  −RF"),
+    ("endcap_L",              ( 7.0000, 19.0600, -114.9950),  3, "left end cap"),
+    ("rod_P1_R1",             (-2.1082, 21.1582,  169.2021),  4, "rod pair 1 right +RF"),
+    ("rod_P1_R2",             ( 2.1082, 16.9672,  169.2021),  4, "rod pair 1 right +RF"),
+    ("rod_P2_R1",             ( 2.1082, 21.1582,  169.2021),  5, "rod pair 2 right −RF"),
+    ("rod_P2_R2",             (-2.1082, 16.9672,  169.2021),  5, "rod pair 2 right −RF"),
+    ("ring_L",                (10.0000, 19.0600,   67.3860),  6, "ring left"),
+    ("ring_R",                (10.0000, 19.0600,  110.3760),  7, "ring right"),
+    ("endcap_R",              ( 7.0000, 19.0600,  -81.2450),  8, "right end cap"),
+    # Perpendicular Paul trap — axis along X
+    ("trap_rod_TL",           (15.3960, 25.9140,  269.6560),  9, "perp rod pair 1 +RF2"),
+    ("trap_rod_BR",           (15.3960, 13.2140,  282.3560),  9, "perp rod pair 1 +RF2"),
+    ("trap_rod_TR",           (15.3960, 25.9140,  282.3560), 10, "perp rod pair 2 −RF2"),
+    ("trap_rod_BL",           (15.3960, 13.2140,  269.6560), 10, "perp rod pair 2 −RF2"),
+    ("trapping_lens_holder",  ( 4.8300, 13.9130,  275.9940), 11, "trapping lens holder DC"),
+    ("collection_lens_holder",(-6.0730, 15.1270,  275.9690), 12, "collection lens holder DC"),
+    # Dielectric lenses — not in the electric PA; checked for generate_dielectric_pa.py
+    ("trapping_lens",         ( 4.0420, 19.5860,  275.9840),  0, "dielectric (not in electric PA)"),
+    ("collection_lens",       (-6.5820, 19.5300,  275.9330),  0, "dielectric (not in electric PA)"),
+]
 
-# ── STL parsing ──────────────────────────────────────────────────────────────
+# ── STL parsing ───────────────────────────────────────────────────────────────
 
 def read_stl_binary(path):
-    """Return list of triangles as ((v0,v1,v2), normal) where each vertex is (x,y,z)."""
     triangles = []
     with open(path, "rb") as f:
-        f.read(80)  # header
-        n, = struct.unpack("<I", f.read(4))
+        f.read(80)
+        (n,) = struct.unpack("<I", f.read(4))
         for _ in range(n):
-            nx, ny, nz = struct.unpack("<fff", f.read(12))
+            struct.unpack("<fff", f.read(12))          # normal (unused)
             v0 = struct.unpack("<fff", f.read(12))
             v1 = struct.unpack("<fff", f.read(12))
             v2 = struct.unpack("<fff", f.read(12))
-            f.read(2)  # attribute byte count
-            triangles.append(((v0, v1, v2), (nx, ny, nz)))
+            f.read(2)
+            triangles.append((v0, v1, v2))
     return triangles
 
 def bbox(triangles):
-    xs = [v[0] for tri, _ in triangles for v in tri]
-    ys = [v[1] for tri, _ in triangles for v in tri]
-    zs = [v[2] for tri, _ in triangles for v in tri]
+    xs = [v[i] for tri in triangles for v in tri for i in [0]]
+    ys = [v[i] for tri in triangles for v in tri for i in [1]]
+    zs = [v[i] for tri in triangles for v in tri for i in [2]]
+    xs = [v[0] for tri in triangles for v in tri]
+    ys = [v[1] for tri in triangles for v in tri]
+    zs = [v[2] for tri in triangles for v in tri]
     return (min(xs), max(xs)), (min(ys), max(ys)), (min(zs), max(zs))
 
-# ── Ray-triangle intersection (Möller-Trumbore) ──────────────────────────────
+# ── Ray–triangle intersection (Möller–Trumbore) ───────────────────────────────
 
-EPS = 1e-9
+_EPS = 1e-9
 
-def ray_triangle_intersect(orig, direction, v0, v1, v2):
-    """Return t (distance along ray) or None if no intersection."""
+def _ray_tri(orig, direction, v0, v1, v2):
     e1 = (v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2])
     e2 = (v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2])
     dx, dy, dz = direction
-    h = (dy*e2[2]-dz*e2[1], dz*e2[0]-dx*e2[2], dx*e2[1]-dy*e2[0])
-    a = e1[0]*h[0] + e1[1]*h[1] + e1[2]*h[2]
-    if abs(a) < EPS:
+    h  = (dy*e2[2]-dz*e2[1], dz*e2[0]-dx*e2[2], dx*e2[1]-dy*e2[0])
+    a  = e1[0]*h[0]+e1[1]*h[1]+e1[2]*h[2]
+    if abs(a) < _EPS:
         return None
-    f = 1.0 / a
-    s = (orig[0]-v0[0], orig[1]-v0[1], orig[2]-v0[2])
-    u = f * (s[0]*h[0] + s[1]*h[1] + s[2]*h[2])
+    f  = 1.0/a
+    s  = (orig[0]-v0[0], orig[1]-v0[1], orig[2]-v0[2])
+    u  = f*(s[0]*h[0]+s[1]*h[1]+s[2]*h[2])
     if u < 0.0 or u > 1.0:
         return None
-    q = (s[1]*e1[2]-s[2]*e1[1], s[2]*e1[0]-s[0]*e1[2], s[0]*e1[1]-s[1]*e1[0])
-    v = f * (dx*q[0] + dy*q[1] + dz*q[2])
-    if v < 0.0 or u + v > 1.0:
+    q  = (s[1]*e1[2]-s[2]*e1[1], s[2]*e1[0]-s[0]*e1[2], s[0]*e1[1]-s[1]*e1[0])
+    v  = f*(dx*q[0]+dy*q[1]+dz*q[2])
+    if v < 0.0 or u+v > 1.0:
         return None
-    t = f * (e2[0]*q[0] + e2[1]*q[1] + e2[2]*q[2])
-    return t if t > EPS else None
+    t  = f*(e2[0]*q[0]+e2[1]*q[1]+e2[2]*q[2])
+    return t if t > _EPS else None
 
-def point_in_mesh(point, triangles, ray=(1.0, 0.0, 0.0)):
-    """Return True if point is inside a closed mesh (parity test, three ray directions)."""
-    counts = []
+def point_in_mesh(point, triangles):
+    """Majority vote across three ray directions — robust for imperfect meshes."""
+    results = []
     for direction in [(1,0,0), (0,1,0), (0,0,1)]:
-        count = 0
-        for (v0, v1, v2), _ in triangles:
-            t = ray_triangle_intersect(point, direction, v0, v1, v2)
-            if t is not None:
-                count += 1
-        counts.append(count % 2 == 1)  # odd = inside
-    return sum(counts) >= 2  # majority vote across 3 ray directions
+        count = sum(
+            1 for tri in triangles
+            if _ray_tri(point, direction, *tri) is not None
+        )
+        results.append(count % 2 == 1)
+    return sum(results) >= 2
 
-# ── Analysis ─────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def fmt_range(lo, hi):
     return f"[{lo:8.3f}, {hi:8.3f}]"
 
-print("=" * 70)
-print("SIMION Paul Trap — STL Sanity Checks")
-print("=" * 70)
+def within(val, lo, hi):
+    return lo <= val <= hi
 
-all_ok = True
-rod_axes = []  # (name, x_center, y_center) in Fusion world coords
+# ── Main loop ─────────────────────────────────────────────────────────────────
 
-for name, (seed, elec) in sorted(SEEDS.items()):
-    path = os.path.join(BASE, name + ".stl")
+print("=" * 72)
+print("paulTrap GEM — STL Sanity Check")
+print(f"PA bounds (Fusion): X {fmt_range(*PA_X)}  Y {fmt_range(*PA_Y)}  Z {fmt_range(*PA_Z)}")
+print("=" * 72)
+
+all_ok     = True
+results    = {}   # stl_stem → dict of computed values
+
+for (stem, seed, elec, desc) in ELECTRODES:
+    path = os.path.join(BASE, stem + ".stl")
+    sx, sy, sz = seed
+
     if not os.path.exists(path):
-        print(f"\n[MISSING] {name}.stl")
+        print(f"\n[MISSING] {stem}.stl  (electrode {elec}: {desc})")
         all_ok = False
+        results[stem] = None
         continue
 
     tris = read_stl_binary(path)
     (xlo, xhi), (ylo, yhi), (zlo, zhi) = bbox(tris)
     cx, cy, cz = (xlo+xhi)/2, (ylo+yhi)/2, (zlo+zhi)/2
-    rx, ry = (xhi-xlo)/2, (yhi-ylo)/2
+    rx, ry, rz = (xhi-xlo)/2, (yhi-ylo)/2, (zhi-zlo)/2
 
-    inside = point_in_mesh(seed, tris)
-    sx, sy, sz = seed
+    inside     = point_in_mesh(seed, tris)
+    in_pa      = (PA_X[0] <= xlo and xhi <= PA_X[1] and
+                  PA_Y[0] <= ylo and yhi <= PA_Y[1] and
+                  PA_Z[0] <= zlo and zhi <= PA_Z[1])
+    seed_in_pa = (within(sx, *PA_X) and within(sy, *PA_Y) and within(sz, *PA_Z))
 
-    # PA bounds check
-    in_pa = (PA_X[0] <= xlo and xhi <= PA_X[1] and
-             PA_Y[0] <= ylo and yhi <= PA_Y[1] and
-             PA_Z[0] <= zlo and zhi <= PA_Z[1])
+    ok_seed    = "OK  " if inside     else "FAIL"
+    ok_pa      = "OK  " if in_pa      else "WARN"
+    ok_spa     = "OK  " if seed_in_pa else "WARN"
 
-    seed_in_pa = (PA_X[0] <= sx <= PA_X[1] and
-                  PA_Y[0] <= sy <= PA_Y[1] and
-                  PA_Z[0] <= sz <= PA_Z[1])
-
-    status_inside = "OK  " if inside else "FAIL"
-    status_pa     = "OK  " if in_pa  else "WARN"
-    status_seed   = "OK  " if seed_in_pa else "WARN"
-
-    print(f"\n── {name}  (electrode {elec}) ─────────────────────────────")
-    print(f"  Bounding box X: {fmt_range(xlo, xhi)}  center={cx:7.3f}  half={rx:.3f}")
-    print(f"  Bounding box Y: {fmt_range(ylo, yhi)}  center={cy:7.3f}  half={ry:.3f}")
-    print(f"  Bounding box Z: {fmt_range(zlo, zhi)}  center={cz:7.3f}")
-    print(f"  Seed point    : ({sx:.4f}, {sy:.4f}, {sz:.4f})")
-    print(f"  Seed inside mesh : [{status_inside}]")
-    print(f"  Mesh within PA   : [{status_pa}]")
-    print(f"  Seed within PA   : [{status_seed}]")
+    elec_label = f"electrode {elec}" if elec > 0 else "dielectric"
+    print(f"\n── {stem}  ({elec_label}: {desc})")
+    print(f"  Bbox X: {fmt_range(xlo,xhi)}  ctr={cx:7.3f}  half={rx:.3f}")
+    print(f"  Bbox Y: {fmt_range(ylo,yhi)}  ctr={cy:7.3f}  half={ry:.3f}")
+    print(f"  Bbox Z: {fmt_range(zlo,zhi)}  ctr={cz:7.3f}  half={rz:.3f}")
+    print(f"  Seed   ({sx:.4f}, {sy:.4f}, {sz:.4f})")
+    print(f"  Seed inside mesh : [{ok_seed}]   Mesh in PA: [{ok_pa}]   Seed in PA: [{ok_spa}]")
 
     if not inside:
+        print(f"  *** SEED IS OUTSIDE MESH — SIMION will fill incorrect region ***")
+        print(f"      Suggest seed: ({cx:.4f}, {cy:.4f}, {cz:.4f})  (bbox centre)")
         all_ok = False
     if not in_pa:
+        print(f"  *** MESH EXTENDS OUTSIDE PA — increase pa_define dimensions ***")
         all_ok = False
 
-    # Collect rod cross-section info (not end cap)
-    if "rod" in name:
-        rod_axes.append((name, cx, cy, (xhi-xlo)/2, (yhi-ylo)/2))
+    results[stem] = dict(
+        xlo=xlo, xhi=xhi, ylo=ylo, yhi=yhi, zlo=zlo, zhi=zhi,
+        cx=cx, cy=cy, cz=cz, rx=rx, ry=ry, rz=rz,
+        inside=inside, in_pa=in_pa,
+    )
 
-# ── Rod geometry summary ─────────────────────────────────────────────────────
+# ── Main-trap rod cross-section summary ───────────────────────────────────────
 
-print("\n" + "=" * 70)
-print("Rod cross-section summary (Fusion world X/Y, from bbox center)")
-print(f"  Expected rod radius   : ~1.5 mm")
-print(f"  Expected |X| from axis: ~2.1 mm   (rod center-to-center = 6 mm → r0=3 mm,")
-print(f"                                      rod center at ~r0 ± r_rod)")
-print(f"  Expected Y centers    : top row ~21.2 mm, bottom row ~17.0 mm")
-print()
-print(f"  {'Name':<18} {'X_center':>9} {'Y_center':>9} {'r_x':>6} {'r_y':>6}")
-for name, cx, cy, rx, ry in sorted(rod_axes):
+MAIN_RODS = ["rod_P1_L1","rod_P1_L2","rod_P2_L1","rod_P2_L2",
+             "rod_P1_R1","rod_P1_R2","rod_P2_R1","rod_P2_R2"]
+
+print("\n" + "=" * 72)
+print("Main-trap rod cross-section summary  (quadrupole axis along Z)")
+print("  Expected: rod radius ≈ 1.5 mm, |X| from trap axis ≈ 2.1 mm")
+print(f"  {'Name':<18} {'X_ctr':>7} {'Y_ctr':>7} {'r_X':>6} {'r_Y':>6}")
+for stem in MAIN_RODS:
+    r = results.get(stem)
+    if r is None:
+        print(f"  {stem:<18}  (missing)")
+        continue
     flag = ""
-    if abs(rx - 1.5) > 0.3 or abs(ry - 1.5) > 0.3:
-        flag = "  ← radius mismatch?"
-    print(f"  {name:<18} {cx:9.4f} {cy:9.4f} {rx:6.3f} {ry:6.3f}{flag}")
+    if abs(r["rx"] - 1.5) > 0.4 or abs(r["ry"] - 1.5) > 0.4:
+        flag = "  ← radius unexpected"
+    print(f"  {stem:<18} {r['cx']:7.3f} {r['cy']:7.3f} {r['rx']:6.3f} {r['ry']:6.3f}{flag}")
 
-# ── End cap specific check ───────────────────────────────────────────────────
+# ── Perp-trap rod cross-section summary ───────────────────────────────────────
 
-print("\n" + "=" * 70)
-print("End cap seed point check")
-endcap_path = os.path.join(BASE, "endcap_L.stl")
-if os.path.exists(endcap_path):
-    tris = read_stl_binary(endcap_path)
-    (xlo, xhi), (ylo, yhi), (zlo, zhi) = bbox(tris)
-    seed = SEEDS["endcap_L"][0]
-    print(f"  End cap bbox Z: [{zlo:.3f}, {zhi:.3f}]  (center = {(zlo+zhi)/2:.3f})")
-    print(f"  GEM seed Z    : {seed[2]:.3f}")
-    print(f"  Known Fusion Z: -116.002 mm (center of end cap from assembly)")
-    if seed[2] > zhi or seed[2] < zlo:
-        print(f"  [FAIL] Seed Z={seed[2]:.3f} is OUTSIDE the end cap bbox!")
-        print(f"         The seed point is almost certainly wrong.")
-        print(f"         Correct seed should be near Z≈{(zlo+zhi)/2:.3f} mm (bbox center)")
+PERP_RODS = ["trap_rod_TL","trap_rod_TR","trap_rod_BL","trap_rod_BR"]
+
+print("\n" + "=" * 72)
+print("Perp-trap rod cross-section summary  (quadrupole axis along X)")
+print("  Rod long axis is X; quadrupole cross-section is in Y-Z plane.")
+print("  Expected: TL/TR Y ≈ 25.9 mm, BL/BR Y ≈ 13.2 mm")
+print("  Expected: TL/BL Z ≈ 269.7 mm, TR/BR Z ≈ 282.4 mm")
+print(f"  {'Name':<18} {'Y_ctr':>7} {'Z_ctr':>7} {'r_Y':>6} {'r_Z':>6}")
+
+perp_y_top, perp_y_bot, perp_z_L, perp_z_R = [], [], [], []
+for stem in PERP_RODS:
+    r = results.get(stem)
+    if r is None:
+        print(f"  {stem:<18}  (missing)")
+        continue
+    flag = ""
+    if abs(r["ry"] - 2.87) > 0.5 or abs(r["rz"] - 2.87) > 0.5:
+        flag = "  ← radius unexpected"
+    print(f"  {stem:<18} {r['cy']:7.3f} {r['cz']:7.3f} {r['ry']:6.3f} {r['rz']:6.3f}{flag}")
+    if "TL" in stem or "TR" in stem:
+        perp_y_top.append(r["cy"])
     else:
-        print(f"  [OK] Seed Z is within bbox.")
+        perp_y_bot.append(r["cy"])
+    if "TL" in stem or "BL" in stem:
+        perp_z_L.append(r["cz"])
+    else:
+        perp_z_R.append(r["cz"])
 
-print("\n" + "=" * 70)
-print("Overall: " + ("All checks passed." if all_ok else "One or more issues found — see above."))
+if perp_y_top and perp_y_bot:
+    y_sep = sum(perp_y_top)/len(perp_y_top) - sum(perp_y_bot)/len(perp_y_bot)
+    z_sep = sum(perp_z_R)/len(perp_z_R)     - sum(perp_z_L)/len(perp_z_L)
+    r0_y  = y_sep / 2
+    r0_z  = z_sep / 2
+    print(f"\n  Y rod-centre separation: {y_sep:.3f} mm  →  Y half-gap r0_Y ≈ {r0_y:.3f} mm")
+    print(f"  Z rod-centre separation: {z_sep:.3f} mm  →  Z half-gap r0_Z ≈ {r0_z:.3f} mm")
+    if abs(y_sep - z_sep) > 0.5:
+        print("  *** Y and Z separations differ — trap may not be square ***")
+
+# ── Ring electrode positions ──────────────────────────────────────────────────
+
+print("\n" + "=" * 72)
+print("Ring electrode Z positions  (should be in gap region, Fusion Z ≈ 67–110 mm)")
+GAP_Z = (67.0, 111.0)
+for stem in ["ring_L", "ring_R"]:
+    r = results.get(stem)
+    if r is None:
+        continue
+    flag = "" if (GAP_Z[0] <= r["cz"] <= GAP_Z[1]) else "  ← outside expected gap region"
+    print(f"  {stem:<12}  Z_ctr = {r['cz']:.3f} mm{flag}")
+
+# ── End-cap Z positions ───────────────────────────────────────────────────────
+
+print("\n" + "=" * 72)
+print("End-cap Z positions")
+expected = {"endcap_L": -115.0, "endcap_R": -81.24}
+for stem, exp_z in expected.items():
+    r = results.get(stem)
+    if r is None:
+        continue
+    err = r["cz"] - exp_z
+    flag = "" if abs(err) < 2.0 else f"  ← {err:+.2f} mm from expected {exp_z} mm"
+    print(f"  {stem:<14}  Z_ctr = {r['cz']:.3f} mm  (expected ≈ {exp_z} mm){flag}")
+
+# ── Lens holder and lens positions ────────────────────────────────────────────
+
+print("\n" + "=" * 72)
+print("Perp-trap lens positions  (should cluster near Fusion Z ≈ 276 mm)")
+LENS_STEMS = ["trapping_lens_holder", "collection_lens_holder",
+              "trapping_lens",        "collection_lens"]
+for stem in LENS_STEMS:
+    r = results.get(stem)
+    if r is None:
+        continue
+    in_lens_region = (260 <= r["cz"] <= 292)
+    flag = "" if in_lens_region else "  ← outside expected Z region"
+    print(f"  {stem:<28}  ctr = ({r['cx']:.2f}, {r['cy']:.2f}, {r['cz']:.2f}){flag}")
+
+# ── Final verdict ─────────────────────────────────────────────────────────────
+
+print("\n" + "=" * 72)
+if all_ok:
+    print("Overall: All checks passed.")
+else:
+    print("Overall: One or more issues found — see FAIL/WARN lines above.")
+    print("  FAIL = seed point outside mesh → SIMION will fill wrong region.")
+    print("  WARN = geometry outside PA bounds → increase pa_define dimensions.")
+print("=" * 72)

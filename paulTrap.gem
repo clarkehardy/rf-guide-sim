@@ -23,7 +23,7 @@
 --   GEM x = Fusion X + 25.0
 --   GEM y = Fusion Y +  8.0
 --   GEM z = Fusion Z + 132.0
---   PA extent (Fusion): X [-25, 34] mm  Y [-8, 37] mm  Z [-132, 295] mm
+--   PA extent (Fusion): X [-25, 40] mm  Y [-8, 37] mm  Z [-132, 295] mm
 --   Grid spacing: 0.5 mm (fast testing) — change dx to 0.15 mm for production
 
 local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\"
@@ -33,7 +33,7 @@ local EPSILON_GLASS = 3.0
 -- Note: surface='fractional' (sub-grid surface enhancement) is incompatible
 -- with SIMION 8.2's dielectric solver and must be omitted.  For higher
 -- accuracy near electrode surfaces without fractional mode, reduce dx.
-pa_define{59*mm, 45*mm, 427*mm, 'planar', dx=0.5,
+pa_define{65*mm, 45*mm, 427*mm, 'planar', dx=0.5,
           filename="paulTrap.pa0"}
 
 locate(25, 8, 132) {
@@ -52,7 +52,7 @@ locate(25, 8, 132) {
   }
 
   e(3) {  -- left end cap
-    stl(D.."endcap_L.stl",    0.00, 19.06, -115.00)
+    stl(D.."endcap_L.stl",    7.00, 19.06, -114.995)
   }
 
   e(4) {  -- rod pair 1, RIGHT, +RF (top-left = P1_R1, bottom-right = P1_R2)
@@ -66,15 +66,15 @@ locate(25, 8, 132) {
   }
 
   e(6) {  -- ring electrode, left (DC, near gap left edge)
-    stl(D.."ring_L.stl",  0.0, 19.06, 67.3862)
+    stl(D.."ring_L.stl",  10.0, 19.06, 67.386)
   }
 
   e(7) {  -- ring electrode, right (DC, near gap right edge)
-    stl(D.."ring_R.stl",  0.0, 19.06, 110.3884)
+    stl(D.."ring_R.stl",  10.0, 19.06, 110.376)
   }
 
   e(8) {  -- right end cap
-    stl(D.."endcap_R.stl",  0.00, 19.06, -81.2419)
+    stl(D.."endcap_R.stl",  7.00, 19.06, -81.245)
   }
 
   -- ── Perpendicular Paul trap (axis along X) ─────────────────────────────────
