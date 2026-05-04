@@ -34,7 +34,7 @@ local EPSILON_GLASS = 3.0
 -- with SIMION 8.2's dielectric solver and must be omitted.  For higher
 -- accuracy near electrode surfaces without fractional mode, reduce dx.
 pa_define{65*mm, 45*mm, 427*mm, 'planar', dx=0.5,
-          filename="paulTrap.pa0"}
+          filename="paulTrap.pa0", surface="fractional"}
 
 locate(25, 8, 132) {
 -- All seed points are in Fusion world coordinates (mm).

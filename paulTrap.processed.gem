@@ -1,5 +1,5 @@
-pa_define(29, 29, 765, planar, n,,, 0.5,,,, fractional,, paulTrappa)
-locate(7, -12.05, 131) {
+pa_define(131, 91, 855, planar, n,,, 0.5,,,, fractional,, paulTrappa)
+locate(25, 8, 132) {
   e(1) {
     stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\rod_P1_L1.stl", -2.1082, 21.1582, -20.647)
     stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\rod_P1_L2.stl", 2.1082, 16.9672, -20.647)
@@ -9,7 +9,7 @@ locate(7, -12.05, 131) {
     stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\rod_P2_L2.stl", -2.1082, 16.9672, -20.647)
   }
   e(3) {
-    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\endcap_L.stl", 0, 19.06, -115)
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\endcap_L.stl", 7, 19.06, -114.995)
   }
   e(4) {
     stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\rod_P1_R1.stl", -2.1082, 21.1582, 169.2021)
@@ -20,12 +20,26 @@ locate(7, -12.05, 131) {
     stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\rod_P2_R2.stl", -2.1082, 16.9672, 169.2021)
   }
   e(6) {
-    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\ring_L.stl", 0, 19.06, 67.3862)
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\ring_L.stl", 10, 19.06, 67.386)
   }
   e(7) {
-    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\ring_R.stl", 0, 19.06, 110.3884)
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\ring_R.stl", 10, 19.06, 110.376)
   }
   e(8) {
-    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\endcap_R.stl", 0, 19.06, -81.2419)
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\endcap_R.stl", 7, 19.06, -81.245)
+  }
+  e(9) {
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\trap_rod_TL.stl", 15.396, 25.914, 269.656)
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\trap_rod_BR.stl", 15.396, 13.214, 282.356)
+  }
+  e(10) {
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\trap_rod_TR.stl", 15.396, 25.914, 282.356)
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\trap_rod_BL.stl", 15.396, 13.214, 269.656)
+  }
+  e(11) {
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\trapping_lens_holder.stl", 4.83, 13.913, 275.994)
+  }
+  e(12) {
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\collection_lens_holder.stl", -6.073, 15.127, 275.969)
   }
 }

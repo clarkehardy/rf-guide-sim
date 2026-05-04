@@ -39,8 +39,9 @@ GEO = dict(
     endcap_R_z   =  -81.2,            # right end cap Z (update to match GEM seed)
     ring_L_z     =    67.4,           # ring_L Z (from GEM seed point)
     ring_R_z     =   110.4,           # ring_R Z (from GEM seed point)
-    view_z       = (-131.0, 251.0),   # Z axis limits (full PA extent)
-    view_y       = (  13.5,  24.5),   # Y axis limits
+    perp_trap_z  = ( 264.0, 289.0),   # approximate Z span of perp-trap rods
+    view_z       = (-131.0, 300.0),   # Z axis limits (extended to include perp-trap)
+    view_y       = (  12.0,  27.5),   # Y axis limits (extended for perp-trap top rods)
 )
 
 # ── I/O ───────────────────────────────────────────────────────────────────────
@@ -68,7 +69,8 @@ def load_trajectories(path):
 def load_voltages(path):
     if not os.path.exists(path):
         return None
-    known = {"time_us", "V_endcap", "V_endcap_R", "V_ring_L", "V_ring_R", "V_RF"}
+    known = {"time_us", "V_endcap", "V_endcap_R", "V_ring_L", "V_ring_R",
+             "V_RF", "V_RF2", "V_trap_lens", "V_coll_lens"}
     cols = {k: [] for k in known}
     headers = None
     with open(path) as f:
@@ -115,6 +117,10 @@ def draw_geometry(ax):
     ax.axvline(g["ring_L_z"],   color="goldenrod", lw=1.5, ls=":",  alpha=0.85, label="Ring L")
     ax.axvline(g["ring_R_z"],   color="goldenrod", lw=1.5, ls=(0,(3,1,1,1)), alpha=0.85, label="Ring R")
 
+    # Perp-trap region
+    pz0, pz1 = g["perp_trap_z"]
+    ax.axvspan(pz0, pz1, color="lavender", alpha=0.55, zorder=0, label="Perp trap")
+
     ax.set_xlim(g["view_z"])
     ax.set_ylim(g["view_y"])
     ax.set_xlabel("Z (mm)")
@@ -151,7 +157,8 @@ def main():
     times    = np.linspace(t_min, t_max, n_frames)
 
     has_volt = volts is not None
-    has_rf   = has_volt and len(volts.get("V_RF", [])) > 0
+    has_rf   = has_volt and len(volts.get("V_RF",  [])) > 0
+    has_rf2  = has_volt and len(volts.get("V_RF2", [])) > 0
     if not has_volt:
         print("  No voltage file found — bottom panel omitted.")
 
@@ -211,10 +218,12 @@ def main():
     if has_volt:
         vt = volts["time_us"]
         volt_style = {
-            "V_endcap":   ("teal",      "-",              "End cap L (3)  [DC]"),
-            "V_endcap_R": ("teal",      "--",             "End cap R (8)  [DC]"),
-            "V_ring_L":   ("goldenrod", (0,(5,2)),        "Ring L (6)  [DC]"),
-            "V_ring_R":   ("goldenrod", (0,(5,2,1,2)),    "Ring R (7)  [DC]"),
+            "V_endcap":    ("teal",       "-",                "End cap L (3)  [DC]"),
+            "V_endcap_R":  ("teal",       "--",               "End cap R (8)  [DC]"),
+            "V_ring_L":    ("goldenrod",  (0,(5,2)),          "Ring L (6)  [DC]"),
+            "V_ring_R":    ("goldenrod",  (0,(5,2,1,2)),      "Ring R (7)  [DC]"),
+            "V_trap_lens": ("purple",     (0,(1,1)),          "Trap lens (11) [DC]"),
+            "V_coll_lens": ("orchid",     (0,(1,1,3,1)),      "Coll lens (12) [DC]"),
         }
         for key, (color, ls, label) in volt_style.items():
             if key in volts and len(volts[key]):
@@ -224,6 +233,10 @@ def main():
             ax_bot.step(vt, volts["V_RF"], where="post",
                         color="crimson", lw=1.5, ls=(0, (3, 1, 1, 1)),
                         label="RF amplitude V₀")
+        if has_rf2:
+            ax_bot.step(vt, volts["V_RF2"], where="post",
+                        color="darkorange", lw=1.5, ls=(0, (3, 1, 1, 1)),
+                        label="RF2 amplitude V₀")
 
         vcursor = ax_bot.axvline(t_min, color="red", lw=1.0, ls="--", alpha=0.8, zorder=5)
         ax_bot.set_xlim(t_min, t_max)

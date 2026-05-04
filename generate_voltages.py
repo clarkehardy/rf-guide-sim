@@ -39,7 +39,7 @@ f_RF  = 2e4          # Hz — carrier frequency of the main Paul trap (axis alon
 # PLACEHOLDER: Set f_RF2 to the correct RF frequency for the perpendicular trap
 # (axis along X).  Stability parameter q ≈ 4eV₀/(m ω² r₀²) — use the known r₀
 # and target q < 0.908.
-f_RF2 = 2e4          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
+f_RF2 = 4.48e4          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
 
 # ── Pulse sequence ────────────────────────────────────────────────────────────
 # Each row: (time_us, V_endcap, V_ring_L, V_ring_R)
@@ -84,13 +84,13 @@ V_ring_R = -200 * np.ones(len(times))
 # ── Perpendicular trap RF amplitude ───────────────────────────────────────────
 # PLACEHOLDER: Set V_RF2 to the zero-to-peak RF voltage needed to trap a particle
 # in the perpendicular trap.  Currently 0 V (rods are inactive).
-V_RF2 = np.zeros_like(times)   # PLACEHOLDER — set to trapping amplitude
+V_RF2 = 150 * np.ones_like(times)   # PLACEHOLDER — set to trapping amplitude
 
 # ── Perpendicular trap DC voltages ────────────────────────────────────────────
 # PLACEHOLDER: Set axial confinement voltages for the perpendicular trap.
 # V_trap_lens (electrode 11) and V_coll_lens (electrode 12) act as end caps.
-V_trap_lens = np.zeros_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
-V_coll_lens = np.zeros_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
+V_trap_lens = 50 * np.ones_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
+V_coll_lens = 50 * np.ones_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
 
 SCHEDULE = list(np.vstack((
     times,

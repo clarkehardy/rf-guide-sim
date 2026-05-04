@@ -41,6 +41,15 @@ ELECTRODES = [
     ("rod_P2_R2.stl",  (0.20, 0.45, 0.80), 0.40, None),
     ("ring_L.stl",     (0.90, 0.65, 0.10), 0.60, "Ring L"),
     ("ring_R.stl",     (0.90, 0.65, 0.10), 0.60, "Ring R"),
+    # Perpendicular Paul trap (axis along X)
+    ("trap_rod_TL.stl",            (0.85, 0.20, 0.15), 0.40, "Perp +RF2"),
+    ("trap_rod_BR.stl",            (0.85, 0.20, 0.15), 0.40, None),
+    ("trap_rod_TR.stl",            (0.20, 0.45, 0.80), 0.40, "Perp −RF2"),
+    ("trap_rod_BL.stl",            (0.20, 0.45, 0.80), 0.40, None),
+    ("trapping_lens_holder.stl",   (0.60, 0.20, 0.70), 0.55, "Trap lens holder"),
+    ("collection_lens_holder.stl", (0.60, 0.20, 0.70), 0.55, "Coll lens holder"),
+    ("trapping_lens.stl",          (0.50, 0.90, 0.95), 0.30, "Trap lens (glass)"),
+    ("collection_lens.stl",        (0.50, 0.90, 0.95), 0.30, None),
 ]
 
 
