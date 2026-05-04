@@ -98,20 +98,19 @@ locate(25, 8, 132) {
   }
 
   -- ── Dielectric lenses ───────────────────────────────────────────────────────
-  -- PLACEHOLDER: lenses are glass (ε_r = EPSILON_GLASS defined above).
-  -- Correct SIMION 8.2 GEM syntax for dielectric regions is not confirmed;
-  -- check the SIMION manual / Examples folder for a .gem file that uses
-  -- a dielectric material and substitute the correct modifier on e(13)/e(14).
-  -- For now these are defined as conductors at 0 V so the file can be refined.
-  -- This approximation is reasonable for initial trajectory work (glass only
-  -- weakly perturbs the field at ε_r ≈ 3).
-
-  e(13) {  -- trapping_lens  (glass, ε_r = EPSILON_GLASS — dielectric treatment pending)
-    stl(D.."trapping_lens.stl",  4.042, 19.586, 275.984)
-  }
-
-  e(14) {  -- collection_lens (glass, ε_r = EPSILON_GLASS — dielectric treatment pending)
-    stl(D.."collection_lens.stl",  -6.582, 19.530, 275.933)
-  }
+  -- The glass lenses (trapping_lens.stl, collection_lens.stl) are NOT defined
+  -- as electrodes here.  Per SIMION 8.2 dielectric documentation, the electric
+  -- PA must treat dielectric material as non-electrode (free space); the lens
+  -- geometry is encoded in a separate dielectric PA file instead.
+  --
+  -- Workflow:
+  --   1. Refine this GEM normally (GUI or pa:refine) to create pa0–pa12.
+  --   2. Run generate_dielectric_pa.py to create paulTrap-dielectric.pa
+  --      (ε_r = EPSILON_GLASS inside lens volumes, 1.0 elsewhere).
+  --   3. Run refine_with_dielectric.lua to re-refine pa1–pa12 with the
+  --      dielectric PA.  After step 3, fast-adjust works as normal.
+  --
+  -- EPSILON_GLASS is defined at the top of this file; change it there and
+  -- regenerate paulTrap-dielectric.pa if the value needs updating.
 
 }
