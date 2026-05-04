@@ -28,6 +28,8 @@
 
 local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\"
 
+local EPSILON_GLASS = 3.0
+
 pa_define{59*mm, 45*mm, 427*mm, 'planar', dx=0.5, surface='fractional',
           filename="paulTrap.pa0"}
 
@@ -96,21 +98,16 @@ locate(25, 8, 132) {
   }
 
   -- ── Dielectric lenses ───────────────────────────────────────────────────────
-  -- PLACEHOLDER: The lenses are glass dielectrics (ε_r = EPSILON_GLASS).
-  -- SIMION does not apply dielectric boundary conditions by default.
-  -- To enable proper dielectric treatment:
-  --   Option A (SIMION 8.2+ dielectric mode): change e(13) to
-  --       e(13, dielectric{epsilon=EPSILON_GLASS}) { stl(...) }
-  --     and add 'dielectric=1' to the pa_define line above.
-  --   Option B: implement surface-charge distribution via a Lua user program.
-  -- Until then, these definitions include the lens geometry for particle
-  -- collision detection but do not modify the electric field.
+  -- Lenses are defined as dielectric regions (SIMION 8.2 dielectric mode).
+  -- ε_r = EPSILON_GLASS, set at the top of this file.
+  -- No special flag is needed on pa_define; the dielectric{} modifier here
+  -- is sufficient to activate dielectric solving for these regions.
 
-  e(13) {  -- trapping_lens (glass, ε_r = EPSILON_GLASS — see PLACEHOLDER above)
+  e(13, dielectric{epsilon=EPSILON_GLASS}) {  -- trapping_lens (glass, ε_r = EPSILON_GLASS — see PLACEHOLDER above)
     stl(D.."trapping_lens.stl",  4.042, 19.586, 275.984)
   }
 
-  e(14) {  -- collection_lens (glass, ε_r = EPSILON_GLASS — see PLACEHOLDER above)
+  e(14, dielectric{epsilon=EPSILON_GLASS}) {  -- collection_lens (glass, ε_r = EPSILON_GLASS — see PLACEHOLDER above)
     stl(D.."collection_lens.stl",  -6.582, 19.530, 275.933)
   }
 
