@@ -2,26 +2,23 @@
 plot_field.py  –  Parse SIMION PA files and visualise the electric field
 inside the Paul trap for any electrode.
 
-Reads a paulTrap.paN file (where N is an electrode number), computes
-E = -grad(V), and saves a two-panel PNG:
-  Left  – X-Z cross-section at trap centre showing potential + E vectors
-  Right – Axial E_z along the trap centre demonstrating field screening
+Reads a paulTrap.paN file, computes E = -grad(V), and saves a two-panel PNG:
+  Left  – cross-section at the trap axis showing potential + E vectors
+            (X-Z plane for main trap,  Y-Z plane for perp-trap)
+  Right – axial field profile along the trap axis
+            (Ez vs Z for main trap,  Ex vs X for perp-trap)
 
 PA binary format (56-byte header, confirmed for this project):
   [0:4]  int32 flags  [4:8] int32  [8:16] float64 scale_ref
   [16:20] int32 nx    [20:24] int32 ny    [24:28] int32 nz
   [28:32] int32       [32:40] float64 dx  [40:48] float64 dy  [48:56] float64 dz
   Data: nx*ny*nz float64, z outermost (slowest), x innermost (fastest).
-  Other electrode surfaces: sign bit set (≈ −0.0).
-  This electrode surface: value ≈ max (≈ 200000).
-  Free space: 0 … max.  Normalise by raw.max() to get 0–1.
+  Other electrode surfaces: sign bit set.  This electrode: value ≈ 200000.
 
 Usage:
-    python plot_field.py                  # all DC electrodes (3, 6, 7, 8)
-    python plot_field.py --elec 3         # left endcap
-    python plot_field.py --elec 6         # ring_L  (in the gap — shows real field)
-    python plot_field.py --elec 7         # ring_R
-    python plot_field.py --elec 8         # right endcap
+    python plot_field.py                  # all DC electrodes (3,6,7,8,11,12)
+    python plot_field.py --elec 3         # left end cap
+    python plot_field.py --elec 11        # trapping lens holder
     python plot_field.py --3d             # also open PyVista window
     python plot_field.py --screenshot s.png
 """
@@ -29,92 +26,105 @@ Usage:
 import argparse, os, struct, sys
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
 # ── Grid constants (must match pa_define in paulTrap.gem) ─────────────────────
-NX, NY, NZ = 29, 29, 765   # grid points  (14/0.5+1, 14/0.5+1, 382/0.5+1)
-DX         = 0.5            # mm per grid unit
-HEADER     = 56             # bytes
+NX, NY, NZ = 131, 91, 855   # grid points  (65/0.5+1, 45/0.5+1, 427/0.5+1)
+DX         = 0.5             # mm per grid unit
+HEADER     = 56              # bytes
 
-# GEM → Fusion world:  Fusion = GEM + OFFSET
-# (from paulTrap.gem: GEM x = Fusion X + 7, GEM y = Fusion Y − 12.05, GEM z = Fusion Z + 131)
-GEM_OFF = np.array([-7.0, 12.05, -131.0])
+# GEM index → Fusion world:  Fusion = i*DX + GEM_OFF
+# locate(25, 8, 132) → GEM_OFF = (-25, -8, -132)
+GEM_OFF = np.array([-25.0, -8.0, -132.0])
 
-# Electrode GEM z-centres (mm) and STL filenames
+# Main Paul trap axis (GEM indices)
+# Axis at Fusion (0.000, 19.050):  GEM x=25.0 mm → ix=50,  GEM y=27.050 mm → iy=54
+MAIN_IX = 50
+MAIN_IY = 54
+
+# Perpendicular trap axis (GEM indices)
+# Axis at Fusion Y=19.564, Z=276.006:  GEM iy=55,  iz=816
+PERP_IY = 55
+PERP_IZ = 816
+
+# cross_plane 'xz': X-Z slice at MAIN_IY, axial Ez vs Z
+# cross_plane 'yz': Y-Z slice at x_gem, axial Ex vs X at (PERP_IY, PERP_IZ)
 _ELEC_INFO = {
-    3: dict(z_gem=16.0,    stl="endcap_L.stl",  label="Left endcap  (electrode 3, V_endcap)"),
-    6: dict(z_gem=198.4,   stl="ring_L.stl",    label="Ring L  (electrode 6, V_ring_L)"),
-    7: dict(z_gem=241.4,   stl="ring_R.stl",    label="Ring R  (electrode 7, V_ring_R)"),
-    8: dict(z_gem=49.76,   stl="endcap_R.stl",  label="Right endcap (electrode 8, V_endcap_R)"),
+    1:  dict(cross_plane='xz', z_gem=111.4, stl="rod_P1_L1.stl",
+             label="Rod pair 1 left (1, +RF)"),
+    2:  dict(cross_plane='xz', z_gem=111.4, stl="rod_P2_L1.stl",
+             label="Rod pair 2 left (2, −RF)"),
+    3:  dict(cross_plane='xz', z_gem=17.0,  stl="endcap_L.stl",
+             label="Left end cap (3, V_endcap)"),
+    4:  dict(cross_plane='xz', z_gem=301.2, stl="rod_P1_R1.stl",
+             label="Rod pair 1 right (4, +RF)"),
+    5:  dict(cross_plane='xz', z_gem=301.2, stl="rod_P2_R1.stl",
+             label="Rod pair 2 right (5, −RF)"),
+    6:  dict(cross_plane='xz', z_gem=199.4, stl="ring_L.stl",
+             label="Ring L (6, V_ring_L)"),
+    7:  dict(cross_plane='xz', z_gem=242.4, stl="ring_R.stl",
+             label="Ring R (7, V_ring_R)"),
+    8:  dict(cross_plane='xz', z_gem=50.8,  stl="endcap_R.stl",
+             label="Right end cap (8, V_endcap_R)"),
+    9:  dict(cross_plane='yz', z_gem=408.0, x_gem=40.4, stl="trap_rod_TL.stl",
+             label="Perp rod pair 1 (9, +RF2)"),
+    10: dict(cross_plane='yz', z_gem=408.0, x_gem=40.4, stl="trap_rod_TR.stl",
+             label="Perp rod pair 2 (10, −RF2)"),
+    11: dict(cross_plane='yz', z_gem=408.0, x_gem=29.8, stl="trapping_lens_holder.stl",
+             label="Trapping lens holder (11, V_trap_lens)"),
+    12: dict(cross_plane='yz', z_gem=408.0, x_gem=18.9, stl="collection_lens_holder.stl",
+             label="Collection lens holder (12, V_coll_lens)"),
 }
-# Ring GEM z from animate.py: ring_L_z=67.4, ring_R_z=110.4 in Fusion  → GEM = Fusion + 131
-# ring_L GEM z = 67.4+131 = 198.4;  ring_R GEM z = 110.4+131 = 241.4
 
 
 def gem_axes():
-    x = np.arange(NX) * DX + GEM_OFF[0]   # Fusion X values
-    y = np.arange(NY) * DX + GEM_OFF[1]   # Fusion Y values
-    z = np.arange(NZ) * DX + GEM_OFF[2]   # Fusion Z values
+    x = np.arange(NX) * DX + GEM_OFF[0]
+    y = np.arange(NY) * DX + GEM_OFF[1]
+    z = np.arange(NZ) * DX + GEM_OFF[2]
     return x, y, z
 
 
 # ── PA reader ─────────────────────────────────────────────────────────────────
 
 def read_pa(path):
-    """
-    Parse one SIMION fast-adjust PA binary file.
-
-    Returns
-    -------
-    V_norm  : ndarray (NZ, NY, NX) float64 – unit potential 0..1,  V[iz, iy, ix]
-    elec_other : bool ndarray – True where another electrode surface (0 V)
-    elec_this  : bool ndarray – True where this electrode surface (1 V)
-    dx_pa   : float – grid spacing from header (mm)
-    """
-    fsize = os.path.getsize(path)
-    n_pts = NX * NY * NZ
+    fsize    = os.path.getsize(path)
+    n_pts    = NX * NY * NZ
     expected = HEADER + n_pts * 8
     if fsize != expected:
         print(f"  WARNING: {os.path.basename(path)}: "
-              f"size {fsize} != expected {expected}  "
-              f"(header={HEADER}, {NX}×{NY}×{NZ} points)")
+              f"size {fsize} != expected {expected}  ({NX}×{NY}×{NZ})")
 
     with open(path, "rb") as f:
         hdr = f.read(HEADER)
         raw = np.frombuffer(f.read(n_pts * 8), dtype="<f8").copy()
 
-    nx_h  = struct.unpack_from("<i", hdr, 16)[0]
-    ny_h  = struct.unpack_from("<i", hdr, 20)[0]
-    nz_h  = struct.unpack_from("<i", hdr, 24)[0]
-    dx_h  = struct.unpack_from("<d", hdr, 32)[0]
+    nx_h = struct.unpack_from("<i", hdr, 16)[0]
+    ny_h = struct.unpack_from("<i", hdr, 20)[0]
+    nz_h = struct.unpack_from("<i", hdr, 24)[0]
+    dx_h = struct.unpack_from("<d", hdr, 32)[0]
     print(f"  Header: dims {nx_h}×{ny_h}×{nz_h}  dx={dx_h:.3g} mm")
 
-    elec_other = np.signbit(raw)                     # sign bit set → other electrode at 0 V
+    elec_other = np.signbit(raw)
     max_val    = raw.max()
-    elec_this  = raw > 0.5 * max_val                 # large positive → this electrode at 1 V
+    elec_this  = raw > 0.5 * max_val
     V_norm     = np.clip(np.abs(raw) / max_val, 0.0, 1.0)
 
-    # Reshape: z outermost, x innermost → V[iz, iy, ix]
     V_norm     = V_norm.reshape(NZ, NY, NX)
     elec_other = elec_other.reshape(NZ, NY, NX)
     elec_this  = elec_this.reshape(NZ, NY, NX)
 
-    n_eo = elec_other.sum();  n_et = elec_this.sum()
-    print(f"  Other-electrode pts: {n_eo}  |  This-electrode pts: {n_et}")
+    print(f"  Other-electrode pts: {elec_other.sum()}  |  This-electrode pts: {elec_this.sum()}")
     return V_norm, elec_other, elec_this, dx_h if dx_h > 0 else DX
 
 
-# ── NaN fill for gradient (iterative dilation) ────────────────────────────────
+# ── NaN fill ──────────────────────────────────────────────────────────────────
 
 def _fill_nan(V):
-    """Fill NaN by iterative box-filter dilation from valid neighbours."""
     try:
         from scipy.ndimage import uniform_filter
     except ImportError:
         return np.where(np.isnan(V), 0.0, V)
-
     filled = V.copy()
     for _ in range(60):
         nan_now = np.isnan(filled)
@@ -133,126 +143,180 @@ def _fill_nan(V):
 # ── Electric field ─────────────────────────────────────────────────────────────
 
 def efield(V, elec_other, elec_this, dx=DX):
-    """
-    Compute E = -grad(V).
-
-    Electrode interiors are set to their boundary value (0 or 1) before
-    differentiation so the gradient inside conductors is near zero.
-    Returns Ex, Ey, Ez each (NZ, NY, NX) in V/mm (unit-potential / mm).
-    """
     V_work = V.copy()
     V_work[elec_other] = 0.0
     V_work[elec_this]  = 1.0
-
-    any_nan = np.isnan(V_work)
-    if any_nan.any():
+    if np.isnan(V_work).any():
         V_work = _fill_nan(V_work)
-
-    # V[iz, iy, ix] → gradient returns (dV/dz, dV/dy, dV/dx)
     gz, gy, gx = np.gradient(V_work, dx, dx, dx)
     return -gx, -gy, -gz
 
 
-# ── 2-D plots ─────────────────────────────────────────────────────────────────
+# ── Shared colormap helper ────────────────────────────────────────────────────
 
-def plot_2d(label, elec_num, V, Ex, Ey, Ez, elec_other, elec_this):
+def _colormap_panel(ax, H, A, V_plot, E1_sl, E2_sl, eo_sl, et_sl,
+                    hlabel, alabel, title):
     """
-    Two-panel figure:
-      Left  – X-Z cross-section at Y = trap centre showing potential + E vectors.
-      Right – Axial E_z decay along trap axis, illustrating field screening by rods.
+    Render a 2-D potential map with E-field quivers onto ax.
+    H, A  : 2-D coordinate arrays (nh, na) for horizontal and vertical axes.
+    V_plot, E1_sl, E2_sl, eo_sl, et_sl : 2-D arrays (nh, na).
+    E1_sl is the horizontal E component, E2_sl the vertical.
     """
-    x_f, y_f, z_f = gem_axes()
-    iy_c = NY // 2                          # y = trap centre
-    ix_c = NX // 2
+    v_max = max(0.05, float(np.nanmax(V_plot))) if np.any(~np.isnan(V_plot)) else 1.0
+    v_max = min(v_max, 1.0)
+    im = ax.pcolormesh(H, A, V_plot, cmap="RdBu_r", vmin=0, vmax=v_max,
+                       shading="nearest", rasterized=True)
+    clabel = (f"Unit potential  (max = {v_max:.3f} × electrode V)"
+              if v_max < 0.99 else "Unit potential  (electrode = 1 V)")
+    plt.colorbar(im, ax=ax, label=clabel, shrink=0.9)
 
-    zc_gem = _ELEC_INFO.get(elec_num, {}).get("z_gem", 30.0)
-    # Z window: ±50 mm around the electrode
+    ax.contourf(H, A, et_sl.astype(float), levels=[0.5, 1.5],
+                colors="goldenrod", alpha=0.7, zorder=2)
+    ax.contourf(H, A, eo_sl.astype(float), levels=[0.5, 1.5],
+                colors="dimgrey",   alpha=0.55, zorder=2)
+
+    nh, na = H.shape
+    sh = max(1, nh // 25)
+    sa = max(1, na // 8)
+    mag = np.hypot(E1_sl[::sh, ::sa], E2_sl[::sh, ::sa])
+    mag[mag < 1e-12] = 1e-12
+    ax.quiver(H[::sh, ::sa], A[::sh, ::sa],
+              E1_sl[::sh, ::sa] / mag, E2_sl[::sh, ::sa] / mag,
+              mag, cmap="YlOrRd", scale=28, alpha=0.9, zorder=3,
+              width=0.004, headwidth=3)
+
+    ax.set_xlabel(hlabel)
+    ax.set_ylabel(alabel)
+    ax.set_title(title)
+    ax.set_aspect("equal")
+    ax.grid(True, alpha=0.18)
+
+
+# ── X-Z panel (main trap) ─────────────────────────────────────────────────────
+
+def _plot_xz(ax1, ax2, V, Ex, Ey, Ez, elec_other, elec_this,
+             x_f, y_f, z_f, info, label):
+    zc_gem = info.get("z_gem", 30.0)
     iz0 = max(0, int((zc_gem - 50) / DX))
     iz1 = min(NZ - 1, int((zc_gem + 50) / DX))
     z_sub = z_f[iz0:iz1 + 1]
 
-    # V[iz, iy, ix] → XZ slice at iy_c:  shape (nz_sub, NX)
-    V_sl  = V         [iz0:iz1 + 1, iy_c, :]
-    Ez_sl = Ez        [iz0:iz1 + 1, iy_c, :]
-    Ex_sl = Ex        [iz0:iz1 + 1, iy_c, :]
-    eo_sl = elec_other[iz0:iz1 + 1, iy_c, :]
-    et_sl = elec_this [iz0:iz1 + 1, iy_c, :]
-    any_e = eo_sl | et_sl
+    V_sl  = V         [iz0:iz1 + 1, MAIN_IY, :]
+    Ez_sl = Ez        [iz0:iz1 + 1, MAIN_IY, :]
+    Ex_sl = Ex        [iz0:iz1 + 1, MAIN_IY, :]
+    eo_sl = elec_other[iz0:iz1 + 1, MAIN_IY, :]
+    et_sl = elec_this [iz0:iz1 + 1, MAIN_IY, :]
 
-    # Electrode potential for display: 0 for other, 1 for this
     V_disp = V_sl.copy()
     V_disp[eo_sl] = 0.0
     V_disp[et_sl] = 1.0
+    V_plot = np.where(eo_sl | et_sl, np.nan, V_disp)
 
-    XX, ZZ = np.meshgrid(x_f, z_sub)    # both (nz_sub, NX);  XX[iz,ix]=x, ZZ[iz,ix]=z
+    # pcolormesh(ZZ, XX, data): ZZ[iz,ix]=z, XX[iz,ix]=x → data[iz,ix]
+    ZZ, XX = np.meshgrid(z_sub, x_f, indexing='ij')   # (nz_sub, NX)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    _colormap_panel(ax1, ZZ, XX, V_plot, Ez_sl, Ex_sl, eo_sl, et_sl,
+                    "Z  (mm, Fusion world)", "X  (mm, Fusion world)",
+                    f"X-Z cross-section  (Y = {y_f[MAIN_IY]:.2f} mm)\n{label}")
 
-    # ── Left panel: X-Z potential map + E vectors ─────────────────────────────
-    V_plot = np.where(any_e, np.nan, V_disp)
-    # Auto-scale: cap at 1.0 but show full dynamic range if max < 0.1
-    v_max_plot = max(0.05, float(np.nanmax(V_plot))) if np.any(~np.isnan(V_plot)) else 1.0
-    v_max_plot = min(v_max_plot, 1.0)
-    im = ax1.pcolormesh(ZZ, XX, V_plot,
-                        cmap="RdBu_r", vmin=0, vmax=v_max_plot,
-                        shading="nearest", rasterized=True)
-    cbar_label = (f"Unit potential  (max = {v_max_plot:.3f} × electrode V)"
-                  if v_max_plot < 0.99 else "Unit potential  (electrode = 1 V)")
-    plt.colorbar(im, ax=ax1, label=cbar_label, shrink=0.9)
-
-    # Electrode cross-hatching
-    ax1.contourf(ZZ, XX, et_sl.astype(float), levels=[0.5, 1.5],
-                 colors="goldenrod", alpha=0.7, zorder=2)
-    ax1.contourf(ZZ, XX, eo_sl.astype(float), levels=[0.5, 1.5],
-                 colors="dimgrey",  alpha=0.55, zorder=2)
-
-    # Normalised E-field arrows (colour = magnitude)
-    # slices: axis-0 = iz, axis-1 = ix in the (nz_sub, NX) arrays
-    sz = max(1, (iz1 - iz0) // 25)
-    sx = max(1, NX // 8)
-    mag = np.hypot(Ex_sl[::sz, ::sx], Ez_sl[::sz, ::sx])
-    mag[mag < 1e-12] = 1e-12
-    ax1.quiver(ZZ[::sz, ::sx], XX[::sz, ::sx],
-               Ez_sl[::sz, ::sx] / mag,
-               Ex_sl[::sz, ::sx] / mag,
-               mag, cmap="YlOrRd", scale=28, alpha=0.9, zorder=3,
-               width=0.004, headwidth=3)
-
-    ax1.set_xlabel("Z  (mm, Fusion world)")
-    ax1.set_ylabel("X  (mm, Fusion world)")
-    ax1.set_title(f"X-Z cross-section  (Y = trap centre)\n{label}")
-    ax1.set_aspect("equal")
-    ax1.grid(True, alpha=0.18)
-
-    # ── Right panel: axial E_z decay ──────────────────────────────────────────
-    # V[iz, iy, ix] → vary iz along full Z axis at trap centre (ix_c, iy_c)
-    Ez_ax = Ez[:, iy_c, ix_c]
-    V_ax  = V [:, iy_c, ix_c]
-
-    ax2.plot(z_f, Ez_ax, color="steelblue", lw=1.8, label=r"$E_z$  (V/mm per unit V)")
+    # Right panel: Ez along Z at trap axis
+    ax2.plot(z_f, Ez[:, MAIN_IY, MAIN_IX], color="steelblue", lw=1.8,
+             label=r"$E_z$  (V/mm per unit V)")
     ax2b = ax2.twinx()
-    ax2b.plot(z_f, V_ax, color="crimson", lw=1.3, ls="--", alpha=0.75,
-              label="V  (unit potential)")
+    ax2b.plot(z_f, V[:, MAIN_IY, MAIN_IX], color="crimson", lw=1.3,
+              ls="--", alpha=0.75, label="V  (unit potential)")
 
     zc_f = zc_gem + GEM_OFF[2]
     ax2.axvline(zc_f, color="dimgrey", lw=1, ls=":", alpha=0.8,
                 label=f"Electrode  z = {zc_f:.1f} mm")
-
-    # Shade the rod sections (left rods: Fusion z = -131 → +75.3 mm
-    #                          right rods: Fusion z = +102.4 → +251 mm)
-    ax2.axvspan(-131.0, 75.3,  alpha=0.07, color="navy",   label="Left rod section")
-    ax2.axvspan(102.4,  251.0, alpha=0.07, color="purple", label="Right rod section")
+    ax2.axvspan(-132.0,  75.3, alpha=0.07, color="navy",   label="Left rod section")
+    ax2.axvspan( 102.4, 236.0, alpha=0.07, color="purple", label="Right rod section")
 
     ax2.set_xlabel("Z  (mm, Fusion world)")
-    ax2.set_ylabel(r"$E_z$  (V/mm per unit V)",  color="steelblue")
-    ax2b.set_ylabel("Unit potential  V",          color="crimson")
+    ax2.set_ylabel(r"$E_z$  (V/mm per unit V)", color="steelblue")
+    ax2b.set_ylabel("Unit potential  V",         color="crimson")
     ax2.set_title("Axial field along trap centre\n(field screening by RF rods visible)")
     ax2.tick_params(axis="y", labelcolor="steelblue")
     ax2b.tick_params(axis="y", labelcolor="crimson")
-    lines1, labs1 = ax2.get_legend_handles_labels()
-    lines2, labs2 = ax2b.get_legend_handles_labels()
-    ax2.legend(lines1 + lines2, labs1 + labs2, fontsize=8, loc="upper right")
+    l1, n1 = ax2.get_legend_handles_labels()
+    l2, n2 = ax2b.get_legend_handles_labels()
+    ax2.legend(l1 + l2, n1 + n2, fontsize=8, loc="upper right")
     ax2.grid(True, alpha=0.18)
+
+
+# ── Y-Z panel (perp-trap) ─────────────────────────────────────────────────────
+
+def _plot_yz(ax1, ax2, V, Ex, Ey, Ez, elec_other, elec_this,
+             x_f, y_f, z_f, info, label):
+    zc_gem = info.get("z_gem", 408.0)
+    ix_sl  = min(NX - 1, max(0, round(info.get("x_gem", MAIN_IX * DX) / DX)))
+
+    iz_c  = round(zc_gem / DX)
+    half  = round(20.0 / DX)
+    iz0   = max(0, iz_c - half)
+    iz1   = min(NZ - 1, iz_c + half)
+    z_sub = z_f[iz0:iz1 + 1]
+
+    # YZ slice at ix_sl: V[iz, iy, ix] → arrays are (nz_sub, NY)
+    V_sl  = V         [iz0:iz1 + 1, :, ix_sl]
+    Ey_sl = Ey        [iz0:iz1 + 1, :, ix_sl]
+    Ez_sl = Ez        [iz0:iz1 + 1, :, ix_sl]
+    eo_sl = elec_other[iz0:iz1 + 1, :, ix_sl]
+    et_sl = elec_this [iz0:iz1 + 1, :, ix_sl]
+
+    V_disp = V_sl.copy()
+    V_disp[eo_sl] = 0.0
+    V_disp[et_sl] = 1.0
+    V_plot = np.where(eo_sl | et_sl, np.nan, V_disp)
+
+    # pcolormesh(ZZ, YY, data): ZZ[iz,iy]=z, YY[iz,iy]=y → data[iz,iy]
+    ZZ, YY = np.meshgrid(z_sub, y_f, indexing='ij')   # (nz_sub, NY)
+
+    _colormap_panel(ax1, ZZ, YY, V_plot, Ez_sl, Ey_sl, eo_sl, et_sl,
+                    "Z  (mm, Fusion world)", "Y  (mm, Fusion world)",
+                    f"Y-Z cross-section  (X = {x_f[ix_sl]:.1f} mm)\n{label}")
+
+    # Right panel: Ex along X at perp-trap axis
+    Ex_ax = Ex[PERP_IZ, PERP_IY, :]
+    V_ax  = V [PERP_IZ, PERP_IY, :]
+
+    ax2.plot(x_f, Ex_ax, color="steelblue", lw=1.8,
+             label=r"$E_x$  (V/mm per unit V)")
+    ax2b = ax2.twinx()
+    ax2b.plot(x_f, V_ax, color="crimson", lw=1.3, ls="--", alpha=0.75,
+              label="V  (unit potential)")
+
+    # Shade the trap region (between lens holders: Fusion X ≈ −6 to +5 mm)
+    ax2.axvspan(-6.1, 4.9, alpha=0.10, color="mediumpurple", label="Trap region")
+    ax2.axvline(x_f[ix_sl], color="dimgrey", lw=1, ls=":", alpha=0.8,
+                label=f"Slice X = {x_f[ix_sl]:.1f} mm")
+
+    ax2.set_xlabel("X  (mm, Fusion world)")
+    ax2.set_ylabel(r"$E_x$  (V/mm per unit V)", color="steelblue")
+    ax2b.set_ylabel("Unit potential  V",         color="crimson")
+    ax2.set_title(f"Axial field along perp-trap axis (X)\n"
+                  f"(Y = {y_f[PERP_IY]:.2f} mm,  Z = {z_f[PERP_IZ]:.1f} mm)")
+    ax2.tick_params(axis="y", labelcolor="steelblue")
+    ax2b.tick_params(axis="y", labelcolor="crimson")
+    l1, n1 = ax2.get_legend_handles_labels()
+    l2, n2 = ax2b.get_legend_handles_labels()
+    ax2.legend(l1 + l2, n1 + n2, fontsize=8, loc="upper right")
+    ax2.grid(True, alpha=0.18)
+
+
+# ── 2-D figure ────────────────────────────────────────────────────────────────
+
+def plot_2d(label, elec_num, V, Ex, Ey, Ez, elec_other, elec_this):
+    x_f, y_f, z_f = gem_axes()
+    info = _ELEC_INFO.get(elec_num, {})
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+
+    if info.get("cross_plane") == "yz":
+        _plot_yz(ax1, ax2, V, Ex, Ey, Ez, elec_other, elec_this,
+                 x_f, y_f, z_f, info, label)
+    else:
+        _plot_xz(ax1, ax2, V, Ex, Ey, Ez, elec_other, elec_this,
+                 x_f, y_f, z_f, info, label)
 
     fig.suptitle(label, fontweight="bold", fontsize=12)
     fig.tight_layout()
@@ -272,78 +336,64 @@ def plot_3d(label, elec_num, V, Ex, Ey, Ez, elec_other, elec_this, screenshot=No
         return
 
     x_f, y_f, z_f = gem_axes()
-    zc_gem = _ELEC_INFO.get(elec_num, {}).get("z_gem", 30.0)
+    info   = _ELEC_INFO.get(elec_num, {})
+    zc_gem = info.get("z_gem", 30.0)
     iz0 = max(0, int((zc_gem - 50) / DX))
     iz1 = min(NZ - 1, int((zc_gem + 50) / DX))
     nz_s = iz1 - iz0 + 1
 
-    # V[iz, iy, ix] → z-window sub-arrays have shape (nz_s, NY, NX)
     V_s  = V  [iz0:iz1 + 1, :, :]
     Ex_s = Ex [iz0:iz1 + 1, :, :]
     Ey_s = Ey [iz0:iz1 + 1, :, :]
     Ez_s = Ez [iz0:iz1 + 1, :, :]
-    et_s = elec_this[iz0:iz1 + 1, :, :]
 
-    # Set electrode surface to boundary value before display
     V_disp = V_s.copy()
     V_disp[elec_other[iz0:iz1 + 1, :, :]] = 0.0
-    V_disp[et_s] = 1.0
+    V_disp[elec_this [iz0:iz1 + 1, :, :]] = 1.0
 
-    # PyVista ImageData needs x-fastest ordering.
-    # V_disp shape is (nz_s, NY, NX): C-order flatten → ix fastest → x fastest ✓
     grid = pv.ImageData()
     grid.dimensions = (NX, NY, nz_s)
     grid.origin     = (x_f[0], y_f[0], z_f[iz0])
     grid.spacing    = (DX, DX, DX)
-    grid.point_data["V"]  = V_disp.flatten(order="C")
-
+    grid.point_data["V"]   = V_disp.flatten(order="C")
     Emag = np.sqrt(Ex_s**2 + Ey_s**2 + Ez_s**2)
     grid.point_data["|E|"] = Emag.flatten(order="C")
-    Evec = np.stack([Ex_s, Ey_s, Ez_s], axis=-1)   # shape (nz_s, NY, NX, 3)
-    grid.point_data["E"]   = Evec.reshape(-1, 3, order="C")
+    grid.point_data["E"]   = np.stack([Ex_s, Ey_s, Ez_s], axis=-1).reshape(-1, 3, order="C")
 
     pl = pv.Plotter(off_screen=(screenshot is not None),
                     title=f"Paul trap field — {label}")
     pl.set_background("white")
 
-    # Potential isosurfaces (semi-transparent, coloured by V)
     for lev in [0.02, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 0.95]:
         iso = grid.contour([lev], scalars="V")
         if iso.n_points:
             pl.add_mesh(iso, opacity=0.20, scalars="V", cmap="RdBu_r",
                         clim=[0, 1], show_scalar_bar=False)
 
-    # E-field glyph arrows (subsample to avoid clutter)
     thresh = grid.threshold(1e-6, scalars="|E|")
     if thresh.n_points > 400:
-        # Sample uniformly using cell centres subsample
         ids = np.linspace(0, thresh.n_points - 1, 400, dtype=int)
         thresh = thresh.extract_points(ids, include_cells=False)
     if thresh.n_points:
-        glyphs = thresh.glyph(orient="E", scale="|E|", factor=0.25,
-                              geom=pv.Arrow())
+        glyphs = thresh.glyph(orient="E", scale="|E|", factor=0.25, geom=pv.Arrow())
         pl.add_mesh(glyphs, color="darkorange", opacity=0.85)
 
-    # Electrode STL for context
-    stl_name = _ELEC_INFO.get(elec_num, {}).get("stl")
+    stl_name = info.get("stl")
     if stl_name:
         stl_path = os.path.join(BASE, stl_name)
         if os.path.exists(stl_path):
             pl.add_mesh(pv.read(stl_path), color="goldenrod",
                         opacity=0.70, smooth_shading=True)
 
-    # Add a dummy mesh just for the scalar bar
     dummy = grid.contour([0.5], scalars="V")
     if dummy.n_points:
-        pl.add_mesh(dummy, opacity=0, scalars="V",
-                    show_scalar_bar=True,
+        pl.add_mesh(dummy, opacity=0, scalars="V", show_scalar_bar=True,
                     scalar_bar_args=dict(title="Unit potential V",
                                         title_font_size=13, label_font_size=11,
                                         n_labels=5, fmt="%.2f",
                                         width=0.5, height=0.06,
                                         position_x=0.25, position_y=0.02,
                                         color="black"))
-
     pl.add_axes(xlabel="X (mm)", ylabel="Y (mm)", zlabel="Z (mm)")
 
     if screenshot:
@@ -359,31 +409,31 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--elec",  type=int, choices=[3, 6, 7, 8], default=None,
-                    help="Which electrode (default: all DC electrodes 3,6,7,8)")
-    ap.add_argument("--3d",    dest="show3d", action="store_true",
+    ap.add_argument("--elec", type=int,
+                    choices=list(range(1, 13)), default=None,
+                    help="Electrode number 1–12 (default: all DC electrodes)")
+    ap.add_argument("--3d",   dest="show3d", action="store_true",
                     help="Open interactive 3-D PyVista window")
     ap.add_argument("--screenshot", default=None,
                     help="Save 3-D view to PNG (implies --3d)")
-    args = ap.parse_args()
-    do_3d = args.show3d or bool(args.screenshot)
+    args   = ap.parse_args()
+    do_3d  = args.show3d or bool(args.screenshot)
 
-    elecs = [args.elec] if args.elec else [3, 6, 7, 8]
+    # Default: all DC electrodes (both traps)
+    elecs = [args.elec] if args.elec else [3, 6, 7, 8, 11, 12]
 
     for en in elecs:
         pa_path = os.path.join(BASE, f"paulTrap.pa{en}")
         if not os.path.exists(pa_path):
             print(f"[skip] {pa_path} not found")
             continue
-        info  = _ELEC_INFO.get(en, {})
-        label = info.get("label", f"Electrode {en}")
+        label = _ELEC_INFO.get(en, {}).get("label", f"Electrode {en}")
         print(f"\n── {label} ──")
         print(f"  Reading {pa_path} …")
         V, eo, et, dx = read_pa(pa_path)
         print("  Computing E = -grad(V) …")
         Ex, Ey, Ez = efield(V, eo, et, dx)
         plot_2d(label, en, V, Ex, Ey, Ez, eo, et)
-
         if do_3d:
             scr = None
             if args.screenshot:
