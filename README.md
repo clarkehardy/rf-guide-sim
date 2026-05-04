@@ -67,6 +67,7 @@ pa_define{59*mm, 45*mm, 427*mm, 'planar', dx=0.5, surface='fractional',
 
 - Dimensions must enclose all electrode geometry with at least ~5 mm clearance on every side.
 - `dx=0.5` is used for fast testing. Change to `dx=0.15` for production runs (increases file size ~37×).
+- `surface='fractional'` (sub-grid surface enhancement) is **incompatible with SIMION 8.2's dielectric solver** and is therefore omitted. If you need higher electrode-surface accuracy without dielectrics, you can add `surface='fractional'` back, but you will not be able to run `refine_with_dielectric.lua` afterwards.
 - Update the three dimensions and the `locate` offsets whenever the geometry changes significantly.
 
 ### locate block

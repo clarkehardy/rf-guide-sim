@@ -30,7 +30,10 @@ local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Gu
 
 local EPSILON_GLASS = 3.0
 
-pa_define{59*mm, 45*mm, 427*mm, 'planar', dx=0.5, surface='fractional',
+-- Note: surface='fractional' (sub-grid surface enhancement) is incompatible
+-- with SIMION 8.2's dielectric solver and must be omitted.  For higher
+-- accuracy near electrode surfaces without fractional mode, reduce dx.
+pa_define{59*mm, 45*mm, 427*mm, 'planar', dx=0.5,
           filename="paulTrap.pa0"}
 
 locate(25, 8, 132) {
