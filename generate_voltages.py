@@ -18,6 +18,7 @@ Electrodes controlled here (main Paul trap, axis along Z):
     V_ring_brake –  electrode 13  (braking ring)
 
 Electrodes controlled here (perpendicular trap, axis along X):
+    V_DC2       –  electrodes 9, 10  (rod pair DC bias: +V_DC2 on pair 1, −V_DC2 on pair 2)
     V_trap_lens –  electrode 11  (trapping_lens_holder)
     V_coll_lens –  electrode 12  (collection_lens_holder)
 
@@ -26,6 +27,7 @@ RF frequency and amplitude envelopes:
     V_RF       –  main trap zero-to-peak amplitude vs time
     f_RF2      –  perpendicular trap carrier frequency (Hz) [PLACEHOLDER]
     V_RF2      –  perpendicular trap zero-to-peak amplitude vs time [PLACEHOLDER]
+    V_DC2      –  perpendicular trap rod DC bias (Mathieu a parameter)
 """
 
 import numpy as np
@@ -35,12 +37,12 @@ BASE       = os.path.dirname(os.path.abspath(__file__))
 OUT_NUMBER = 1        # matches voltage_file_number in SIMION
 
 # ── RF parameters ─────────────────────────────────────────────────────────────
-f_RF  = 2e4          # Hz — carrier frequency of the main Paul trap (axis along Z)
+f_RF  = 2.5e4          # Hz — carrier frequency of the main Paul trap (axis along Z)
 
 # PLACEHOLDER: Set f_RF2 to the correct RF frequency for the perpendicular trap
 # (axis along X).  Stability parameter q ≈ 4eV₀/(m ω² r₀²) — use the known r₀
 # and target q < 0.908.
-f_RF2 = 1e3          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
+f_RF2 = 3e3          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
 
 # ── Pulse sequence ────────────────────────────────────────────────────────────
 # Each row: (time_us, V_endcap, V_ring_L, V_ring_R)
@@ -84,23 +86,27 @@ V_ring_R = -200 * np.ones(len(times))
 
 # ── Braking ring electrode ─────────────────────────────────────────────────────
 # V_ring_brake (electrode 13): independently controllable DC ring electrode.
-V_ring_brake = np.zeros_like(times)   # edit to apply braking pulse
+V_ring_brake = 300 * np.ones_like(times)   # edit to apply braking pulse
 
 # ── Perpendicular trap RF amplitude ───────────────────────────────────────────
 # PLACEHOLDER: Set V_RF2 to the zero-to-peak RF voltage needed to trap a particle
 # in the perpendicular trap.  Currently 0 V (rods are inactive).
 V_RF2 = 150 * np.ones_like(times)   # PLACEHOLDER — set to trapping amplitude
 
+# DC bias applied symmetrically to rod pairs (+V_DC2 on pair 1, −V_DC2 on pair 2).
+# Sets Mathieu stability parameter a = 8eV_DC2 / (m ω² r₀²).  Zero = pure RF trap.
+V_DC2 = np.zeros_like(times)
+
 # ── Perpendicular trap DC voltages ────────────────────────────────────────────
 # PLACEHOLDER: Set axial confinement voltages for the perpendicular trap.
 # V_trap_lens (electrode 11) and V_coll_lens (electrode 12) act as end caps.
-V_trap_lens = 5 * np.ones_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
-V_coll_lens = 5 * np.ones_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
+V_trap_lens = 120 * np.ones_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
+V_coll_lens = 120 * np.ones_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
 
 SCHEDULE = list(np.vstack((
     times,
     V_endcap, V_endcap_R, V_ring_L, V_ring_R, V_ring_brake, V_RF,
-    V_RF2, V_trap_lens, V_coll_lens,
+    V_RF2, V_DC2, V_trap_lens, V_coll_lens,
 )).T)
 
 # ── Write CSV ─────────────────────────────────────────────────────────────────
@@ -109,11 +115,11 @@ with open(out_path, "w") as f:
     f.write(f"# f_RF_Hz={f_RF}\n")
     f.write(f"# f_RF2_Hz={f_RF2}\n")
     f.write("time_us,V_endcap,V_endcap_R,V_ring_L,V_ring_R,V_ring_brake,V_RF,"
-            "V_RF2,V_trap_lens,V_coll_lens\n")
+            "V_RF2,V_DC2,V_trap_lens,V_coll_lens\n")
     for row in SCHEDULE:
         f.write(f"{row[0]:.2f},"
                 f"{row[1]:.6f},{row[2]:.6f},{row[3]:.6f},{row[4]:.6f},{row[5]:.6f},"
-                f"{row[6]:.6f},{row[7]:.6f},{row[8]:.6f},{row[9]:.6f}\n")
+                f"{row[6]:.6f},{row[7]:.6f},{row[8]:.6f},{row[9]:.6f},{row[10]:.6f}\n")
 
 print(f"Written {len(SCHEDULE)} rows → {out_path}")
 
@@ -129,8 +135,9 @@ try:
     v13  = np.array([r[5] for r in SCHEDULE])
     vrf  = np.array([r[6] for r in SCHEDULE])
     vrf2 = np.array([r[7] for r in SCHEDULE])
-    v11  = np.array([r[8] for r in SCHEDULE])
-    v12  = np.array([r[9] for r in SCHEDULE])
+    vdc2 = np.array([r[8] for r in SCHEDULE])
+    v11  = np.array([r[9] for r in SCHEDULE])
+    v12  = np.array([r[10] for r in SCHEDULE])
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 5), sharex=True)
 
@@ -147,6 +154,7 @@ try:
 
     ax2.step(t, v11,  where="post", color="steelblue",  lw=1.5, label="Trap lens holder (11)  [DC]")
     ax2.step(t, v12,  where="post", color="steelblue",  lw=1.5, ls="--", label="Coll lens holder (12)  [DC]")
+    ax2.step(t, vdc2, where="post", color="mediumseagreen", lw=1.5, ls=(0,(4,1)), label="Rod DC bias V_DC2")
     ax2.step(t, vrf2, where="post", color="darkorange", lw=1.5, ls=":",  label=f"RF2 V₀  (f={f_RF2:.0f} Hz)")
     ax2.set_xlabel("Time (µs)")
     ax2.set_ylabel("Voltage (V)")

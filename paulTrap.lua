@@ -71,10 +71,10 @@ local g_simion = 9.81e-9  -- mm/us²
 
 -- ── Voltage schedule (populated from file) ───────────────────────────────────
 -- Main trap DC: _v3=endcap_L, _v6=ring_L, _v7=ring_R, _v8=endcap_R, _v13=ring_brake
--- Perp trap DC: _v11=trapping_lens_holder, _v12=collection_lens_holder
+-- Perp trap DC: _v11=trapping_lens_holder, _v12=collection_lens_holder, _v_dc2=rod DC bias
 -- RF envelopes: _v_rf=main trap, _v_rf2=perp trap
 local _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
-local _v11, _v12, _v13, _v_rf2 = {}, {}, {}, {}
+local _v11, _v12, _v13, _v_rf2, _v_dc2 = {}, {}, {}, {}, {}
 
 local function _interp(t_tbl, v_tbl, t)
   if #t_tbl == 0 then return 0.0 end
@@ -98,7 +98,7 @@ local _traj_step  = 0   -- per-ion step counter for stride
 function segment.initialize_run()
   -- Clear all schedule tables so re-runs don't accumulate rows
   _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
-  _v11, _v12, _v13, _v_rf2 = {}, {}, {}, {}
+  _v11, _v12, _v13, _v_rf2, _v_dc2 = {}, {}, {}, {}, {}
 
   do
     local vpath = D .. "voltages_" .. math.floor(voltage_file_number) .. ".csv"
@@ -142,6 +142,7 @@ function segment.initialize_run()
         ["V_ring_brake"] = _v13,
         ["V_RF"]         = _v_rf,
         ["V_RF2"]        = _v_rf2,
+        ["V_DC2"]        = _v_dc2,
         ["V_trap_lens"]  = _v11,
         ["V_coll_lens"]  = _v12,
       }
@@ -179,6 +180,7 @@ function segment.initialize_run()
       _ch("V_ring_brake", _v13)
       _ch("V_RF",         _v_rf)
       _ch("V_RF2",        _v_rf2)
+      _ch("V_DC2",        _v_dc2)
       _ch("V_trap_lens",  _v11)
       _ch("V_coll_lens",  _v12)
     else
@@ -225,11 +227,14 @@ function segment.fast_adjust()
   if #_v7  > 0 then adj_elect[7] = _interp(_vt, _v7,  t) end
   if #_v8  > 0 then adj_elect[8] = _interp(_vt, _v8,  t) end
 
-  -- Perpendicular trap RF (electrodes 9, 10)
+  -- Perpendicular trap RF + DC bias (electrodes 9, 10)
+  -- Pair 1: +(V_RF2·cos + V_DC2),  Pair 2: -(V_RF2·cos + V_DC2)
+  -- Mathieu parameters: q = 4eV_RF2/(mω²r₀²),  a = 8eV_DC2/(mω²r₀²)
   local amp2 = #_v_rf2 > 0 and _interp(_vt, _v_rf2, t) or _V0_2_default
-  local V_RF2 = amp2 * math.cos(_rf_omega_2 * t)
-  adj_elect[9]  =  V_RF2   -- trap rod pair 1, TL+BR  (+RF2 phase)
-  adj_elect[10] = -V_RF2   -- trap rod pair 2, TR+BL  (-RF2 phase)
+  local dc2  = #_v_dc2  > 0 and _interp(_vt, _v_dc2,  t) or 0.0
+  local V_RF2 = amp2 * math.cos(_rf_omega_2 * t) + dc2
+  adj_elect[9]  =  V_RF2   -- trap rod pair 1, TL+BR  (+RF2+DC phase)
+  adj_elect[10] = -V_RF2   -- trap rod pair 2, TR+BL  (-RF2-DC phase)
 
   -- Perpendicular trap DC (electrodes 11, 12)
   if #_v11 > 0 then adj_elect[11] = _interp(_vt, _v11, t) end

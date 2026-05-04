@@ -70,7 +70,7 @@ def load_voltages(path):
     if not os.path.exists(path):
         return None
     known = {"time_us", "V_endcap", "V_endcap_R", "V_ring_L", "V_ring_R", "V_ring_brake",
-             "V_RF", "V_RF2", "V_trap_lens", "V_coll_lens"}
+             "V_RF", "V_RF2", "V_DC2", "V_trap_lens", "V_coll_lens"}
     cols = {k: [] for k in known}
     headers = None
     with open(path) as f:
@@ -159,6 +159,7 @@ def main():
     has_volt = volts is not None
     has_rf   = has_volt and len(volts.get("V_RF",  [])) > 0
     has_rf2  = has_volt and len(volts.get("V_RF2", [])) > 0
+    has_dc2  = has_volt and len(volts.get("V_DC2", [])) > 0
     if not has_volt:
         print("  No voltage file found — bottom panel omitted.")
 
@@ -234,6 +235,10 @@ def main():
             ax_bot.step(vt, volts["V_RF"], where="post",
                         color="crimson", lw=1.5, ls=(0, (3, 1, 1, 1)),
                         label="RF amplitude V₀")
+        if has_dc2:
+            ax_bot.step(vt, volts["V_DC2"], where="post",
+                        color="mediumseagreen", lw=1.5, ls=(0, (4, 1)),
+                        label="Rod DC bias V_DC2")
         if has_rf2:
             ax_bot.step(vt, volts["V_RF2"], where="post",
                         color="darkorange", lw=1.5, ls=(0, (3, 1, 1, 1)),
