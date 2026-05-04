@@ -75,6 +75,8 @@ _ELEC_INFO = {
              label="Trapping lens holder (11, V_trap_lens)"),
     12: dict(cross_plane='yz', z_gem=408.0, x_gem=18.9, stl="collection_lens_holder.stl",
              label="Collection lens holder (12, V_coll_lens)"),
+    13: dict(cross_plane='xz', z_gem=0.0,  stl="ring_brake.stl",
+             label="Ring brake (13, V_ring_brake)"),  # z_gem: PLACEHOLDER — update after export
 }
 
 
@@ -410,8 +412,8 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--elec", type=int,
-                    choices=list(range(1, 13)), default=None,
-                    help="Electrode number 1–12 (default: all DC electrodes)")
+                    choices=list(range(1, 14)), default=None,
+                    help="Electrode number 1–13 (default: all DC electrodes)")
     ap.add_argument("--3d",   dest="show3d", action="store_true",
                     help="Open interactive 3-D PyVista window")
     ap.add_argument("--screenshot", default=None,
@@ -420,7 +422,7 @@ def main():
     do_3d  = args.show3d or bool(args.screenshot)
 
     # Default: all DC electrodes (both traps)
-    elecs = [args.elec] if args.elec else [3, 6, 7, 8, 11, 12]
+    elecs = [args.elec] if args.elec else [3, 6, 7, 8, 13, 11, 12]
 
     for en in elecs:
         pa_path = os.path.join(BASE, f"paulTrap.pa{en}")

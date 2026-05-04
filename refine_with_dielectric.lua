@@ -17,7 +17,7 @@
 
 local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\"
 
-local N_ELECTRODES = 12   -- electrodes 1–12 (lenses 13/14 are not in the electric PA)
+local N_ELECTRODES = 13   -- electrodes 1–13 (glass lenses 14/15 are not in the electric PA)
 local CONVERGENCE  = 1e-7 -- refine convergence criterion
 
 -- ── Open the dielectric permittivity array ────────────────────────────────────

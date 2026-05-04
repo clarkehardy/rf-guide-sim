@@ -21,6 +21,7 @@ Electrodes checked
  10  trap_rod_TR, trap_rod_BL    perp-trap rod pair 2 (−RF2)
  11  trapping_lens_holder        perp-trap DC electrode
  12  collection_lens_holder      perp-trap DC electrode
+ 13  ring_brake                  braking ring electrode (DC)
   –  trapping_lens               glass dielectric (not in electric PA)
   –  collection_lens             glass dielectric (not in electric PA)
 """
@@ -60,6 +61,7 @@ ELECTRODES = [
     ("trap_rod_BL",           (15.3960, 13.2140,  269.6560), 10, "perp rod pair 2 −RF2"),
     ("trapping_lens_holder",  ( 4.8300, 13.9130,  275.9940), 11, "trapping lens holder DC"),
     ("collection_lens_holder",(-6.0730, 15.1270,  275.9690), 12, "collection lens holder DC"),
+    ("ring_brake",            (10.0000, 19.0600,  244.6700), 13, "braking ring DC — PLACEHOLDER seed, update Z"),
     # Dielectric lenses — not in the electric PA; checked for generate_dielectric_pa.py
     ("trapping_lens",         ( 4.0420, 19.5860,  275.9840),  0, "dielectric (not in electric PA)"),
     ("collection_lens",       (-6.5820, 19.5300,  275.9330),  0, "dielectric (not in electric PA)"),
@@ -252,14 +254,16 @@ if perp_y_top and perp_y_bot:
 # ── Ring electrode positions ──────────────────────────────────────────────────
 
 print("\n" + "=" * 72)
-print("Ring electrode Z positions  (should be in gap region, Fusion Z ≈ 67–110 mm)")
+print("Ring electrode Z positions")
+print("  ring_L / ring_R: gap region Fusion Z ≈ 67–110 mm")
 GAP_Z = (67.0, 111.0)
-for stem in ["ring_L", "ring_R"]:
+for stem in ["ring_L", "ring_R", "ring_brake"]:
     r = results.get(stem)
     if r is None:
         continue
-    flag = "" if (GAP_Z[0] <= r["cz"] <= GAP_Z[1]) else "  ← outside expected gap region"
-    print(f"  {stem:<12}  Z_ctr = {r['cz']:.3f} mm{flag}")
+    in_gap = GAP_Z[0] <= r["cz"] <= GAP_Z[1]
+    flag = "" if in_gap or stem == "ring_brake" else "  ← outside expected gap region"
+    print(f"  {stem:<14}  Z_ctr = {r['cz']:.3f} mm{flag}")
 
 # ── End-cap Z positions ───────────────────────────────────────────────────────
 

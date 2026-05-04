@@ -42,4 +42,7 @@ locate(25, 8, 132) {
   e(12) {
     stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\collection_lens_holder.stl", -6.073, 15.127, 275.969)
   }
+  e(13) {
+    stl("C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\ring_brake.stl", 10, 19.06, 244.67)
+  }
 }

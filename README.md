@@ -115,8 +115,9 @@ rod_P1_L1.stl endcap_L.stl   # replace with the files you need
 | 10 | Perp-trap rod pair 2 (TR + BL) | RF | −RF2 |
 | 11 | Trapping lens holder | DC | `V_trap_lens` |
 | 12 | Collection lens holder | DC | `V_coll_lens` |
+| 13 | Braking ring electrode | DC | `V_ring_brake` |
 
-Electrodes 13 and 14 (glass lenses) are **not defined in the GEM**. They are dielectric, not conductive — see Section 5.
+Electrodes 14 and 15 (glass lenses) are **not defined in the GEM**. They are dielectric, not conductive — see Section 5.
 
 After any geometry change, run the sanity check before refining:
 

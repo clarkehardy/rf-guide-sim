@@ -41,6 +41,7 @@ ELECTRODES = [
     ("rod_P2_R2.stl",  (0.20, 0.45, 0.80), 0.40, None),
     ("ring_L.stl",     (0.90, 0.65, 0.10), 0.60, "Ring L"),
     ("ring_R.stl",     (0.90, 0.65, 0.10), 0.60, "Ring R"),
+    ("ring_brake.stl", (0.72, 0.35, 0.05), 0.60, "Ring brake"),
     # Perpendicular Paul trap (axis along X)
     ("trap_rod_TL.stl",            (0.85, 0.20, 0.15), 0.40, "Perp +RF2"),
     ("trap_rod_BR.stl",            (0.85, 0.20, 0.15), 0.40, None),

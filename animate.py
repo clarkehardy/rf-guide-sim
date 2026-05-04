@@ -69,7 +69,7 @@ def load_trajectories(path):
 def load_voltages(path):
     if not os.path.exists(path):
         return None
-    known = {"time_us", "V_endcap", "V_endcap_R", "V_ring_L", "V_ring_R",
+    known = {"time_us", "V_endcap", "V_endcap_R", "V_ring_L", "V_ring_R", "V_ring_brake",
              "V_RF", "V_RF2", "V_trap_lens", "V_coll_lens"}
     cols = {k: [] for k in known}
     headers = None
@@ -218,12 +218,13 @@ def main():
     if has_volt:
         vt = volts["time_us"]
         volt_style = {
-            "V_endcap":    ("teal",       "-",                "End cap L (3)  [DC]"),
-            "V_endcap_R":  ("teal",       "--",               "End cap R (8)  [DC]"),
-            "V_ring_L":    ("goldenrod",  (0,(5,2)),          "Ring L (6)  [DC]"),
-            "V_ring_R":    ("goldenrod",  (0,(5,2,1,2)),      "Ring R (7)  [DC]"),
-            "V_trap_lens": ("purple",     (0,(1,1)),          "Trap lens (11) [DC]"),
-            "V_coll_lens": ("orchid",     (0,(1,1,3,1)),      "Coll lens (12) [DC]"),
+            "V_endcap":      ("teal",       "-",                "End cap L (3)  [DC]"),
+            "V_endcap_R":    ("teal",       "--",               "End cap R (8)  [DC]"),
+            "V_ring_L":      ("goldenrod",  (0,(5,2)),          "Ring L (6)  [DC]"),
+            "V_ring_R":      ("goldenrod",  (0,(5,2,1,2)),      "Ring R (7)  [DC]"),
+            "V_ring_brake":  ("sienna",     (0,(4,1,1,1)),      "Ring brake (13) [DC]"),
+            "V_trap_lens":   ("purple",     (0,(1,1)),          "Trap lens (11) [DC]"),
+            "V_coll_lens":   ("orchid",     (0,(1,1,3,1)),      "Coll lens (12) [DC]"),
         }
         for key, (color, ls, label) in volt_style.items():
             if key in volts and len(volts[key]):

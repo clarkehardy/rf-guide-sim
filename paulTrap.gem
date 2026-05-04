@@ -10,14 +10,15 @@
 --   6 = ring electrode, left  (DC, V_ring_L in CSV)
 --   7 = ring electrode, right (DC, V_ring_R in CSV)
 --   8 = right end cap  (DC, V_endcap_R in CSV)
+--  13 = ring_brake             (DC, V_ring_brake in CSV)
 --
 -- Perpendicular trap (axis along X):
 --   9  = trap rod pair 1 (+RF2): trap_rod_TL + trap_rod_BR
 --   10 = trap rod pair 2 (-RF2): trap_rod_TR + trap_rod_BL
 --   11 = trapping_lens_holder  (DC, V_trap_lens in CSV)
 --   12 = collection_lens_holder (DC, V_coll_lens in CSV)
---   13 = trapping_lens   (glass dielectric — see PLACEHOLDER note)
---   14 = collection_lens (glass dielectric — see PLACEHOLDER note)
+--   14 = trapping_lens   (glass dielectric — see PLACEHOLDER note)
+--   15 = collection_lens (glass dielectric — see PLACEHOLDER note)
 --
 -- Coordinate transform:
 --   GEM x = Fusion X + 25.0
@@ -100,6 +101,14 @@ locate(25, 8, 132) {
     stl(D.."collection_lens_holder.stl",  -6.073, 15.127, 275.969)
   }
 
+  -- ── Braking ring electrode ────────────────────────────────────────────────────
+  -- PLACEHOLDER: Replace the seed point below with the centroid of ring_brake.stl
+  -- in Fusion world coordinates.  Use the same X ≈ 10 mm pattern as ring_L/ring_R
+  -- (solid wall material, not the aperture centre).
+  e(13) {
+    stl(D.."ring_brake.stl",  10.0, 19.06, 244.67)
+  }
+
   -- ── Dielectric lenses ───────────────────────────────────────────────────────
   -- The glass lenses (trapping_lens.stl, collection_lens.stl) are NOT defined
   -- as electrodes here.  Per SIMION 8.2 dielectric documentation, the electric
@@ -107,10 +116,10 @@ locate(25, 8, 132) {
   -- geometry is encoded in a separate dielectric PA file instead.
   --
   -- Workflow:
-  --   1. Refine this GEM normally (GUI or pa:refine) to create pa0–pa12.
+  --   1. Refine this GEM normally (GUI or pa:refine) to create pa0–pa13.
   --   2. Run generate_dielectric_pa.py to create paulTrap-dielectric.pa
   --      (ε_r = EPSILON_GLASS inside lens volumes, 1.0 elsewhere).
-  --   3. Run refine_with_dielectric.lua to re-refine pa1–pa12 with the
+  --   3. Run refine_with_dielectric.lua to re-refine pa1–pa13 with the
   --      dielectric PA.  After step 3, fast-adjust works as normal.
   --
   -- EPSILON_GLASS is defined at the top of this file; change it there and

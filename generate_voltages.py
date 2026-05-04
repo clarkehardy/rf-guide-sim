@@ -11,10 +11,11 @@ Format: one row per time point; voltages are linearly interpolated between rows.
 For a sharp step, add two rows at the same time (or 0.1 µs apart).
 
 Electrodes controlled here (main Paul trap, axis along Z):
-    V_endcap   –  electrode 3  (left end cap)
-    V_endcap_R –  electrode 8  (right end cap)
-    V_ring_L   –  electrode 6  (ring near gap left edge)
-    V_ring_R   –  electrode 7  (ring near gap right edge)
+    V_endcap     –  electrode 3   (left end cap)
+    V_endcap_R   –  electrode 8   (right end cap)
+    V_ring_L     –  electrode 6   (ring near gap left edge)
+    V_ring_R     –  electrode 7   (ring near gap right edge)
+    V_ring_brake –  electrode 13  (braking ring)
 
 Electrodes controlled here (perpendicular trap, axis along X):
     V_trap_lens –  electrode 11  (trapping_lens_holder)
@@ -39,7 +40,7 @@ f_RF  = 2e4          # Hz — carrier frequency of the main Paul trap (axis alon
 # PLACEHOLDER: Set f_RF2 to the correct RF frequency for the perpendicular trap
 # (axis along X).  Stability parameter q ≈ 4eV₀/(m ω² r₀²) — use the known r₀
 # and target q < 0.908.
-f_RF2 = 4.48e4          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
+f_RF2 = 1e3          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
 
 # ── Pulse sequence ────────────────────────────────────────────────────────────
 # Each row: (time_us, V_endcap, V_ring_L, V_ring_R)
@@ -81,6 +82,10 @@ V_endcap = np.zeros(len(times))
 V_ring_L = 50 * np.ones(len(times))
 V_ring_R = -200 * np.ones(len(times))
 
+# ── Braking ring electrode ─────────────────────────────────────────────────────
+# V_ring_brake (electrode 13): independently controllable DC ring electrode.
+V_ring_brake = np.zeros_like(times)   # edit to apply braking pulse
+
 # ── Perpendicular trap RF amplitude ───────────────────────────────────────────
 # PLACEHOLDER: Set V_RF2 to the zero-to-peak RF voltage needed to trap a particle
 # in the perpendicular trap.  Currently 0 V (rods are inactive).
@@ -89,12 +94,12 @@ V_RF2 = 150 * np.ones_like(times)   # PLACEHOLDER — set to trapping amplitude
 # ── Perpendicular trap DC voltages ────────────────────────────────────────────
 # PLACEHOLDER: Set axial confinement voltages for the perpendicular trap.
 # V_trap_lens (electrode 11) and V_coll_lens (electrode 12) act as end caps.
-V_trap_lens = 50 * np.ones_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
-V_coll_lens = 50 * np.ones_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
+V_trap_lens = 5 * np.ones_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
+V_coll_lens = 5 * np.ones_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
 
 SCHEDULE = list(np.vstack((
     times,
-    V_endcap, V_endcap_R, V_ring_L, V_ring_R, V_RF,
+    V_endcap, V_endcap_R, V_ring_L, V_ring_R, V_ring_brake, V_RF,
     V_RF2, V_trap_lens, V_coll_lens,
 )).T)
 
@@ -103,12 +108,12 @@ out_path = os.path.join(BASE, f"voltages_{OUT_NUMBER}.csv")
 with open(out_path, "w") as f:
     f.write(f"# f_RF_Hz={f_RF}\n")
     f.write(f"# f_RF2_Hz={f_RF2}\n")
-    f.write("time_us,V_endcap,V_endcap_R,V_ring_L,V_ring_R,V_RF,"
+    f.write("time_us,V_endcap,V_endcap_R,V_ring_L,V_ring_R,V_ring_brake,V_RF,"
             "V_RF2,V_trap_lens,V_coll_lens\n")
     for row in SCHEDULE:
         f.write(f"{row[0]:.2f},"
                 f"{row[1]:.6f},{row[2]:.6f},{row[3]:.6f},{row[4]:.6f},{row[5]:.6f},"
-                f"{row[6]:.6f},{row[7]:.6f},{row[8]:.6f}\n")
+                f"{row[6]:.6f},{row[7]:.6f},{row[8]:.6f},{row[9]:.6f}\n")
 
 print(f"Written {len(SCHEDULE)} rows → {out_path}")
 
@@ -121,18 +126,20 @@ try:
     v8   = np.array([r[2] for r in SCHEDULE])
     v6   = np.array([r[3] for r in SCHEDULE])
     v7   = np.array([r[4] for r in SCHEDULE])
-    vrf  = np.array([r[5] for r in SCHEDULE])
-    vrf2 = np.array([r[6] for r in SCHEDULE])
-    v11  = np.array([r[7] for r in SCHEDULE])
-    v12  = np.array([r[8] for r in SCHEDULE])
+    v13  = np.array([r[5] for r in SCHEDULE])
+    vrf  = np.array([r[6] for r in SCHEDULE])
+    vrf2 = np.array([r[7] for r in SCHEDULE])
+    v11  = np.array([r[8] for r in SCHEDULE])
+    v12  = np.array([r[9] for r in SCHEDULE])
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 5), sharex=True)
 
-    ax1.step(t, v3,  where="post", color="teal",      lw=1.5, label="End cap L (3)  [DC]")
-    ax1.step(t, v8,  where="post", color="teal",      lw=1.5, ls="--", label="End cap R (8)  [DC]")
-    ax1.step(t, v6,  where="post", color="goldenrod", lw=1.5, label="Ring L (6)  [DC]")
-    ax1.step(t, v7,  where="post", color="goldenrod", lw=1.5, ls="--", label="Ring R (7)  [DC]")
-    ax1.step(t, vrf, where="post", color="crimson",   lw=1.5, ls=":",  label=f"RF V₀  (f={f_RF:.0f} Hz)")
+    ax1.step(t, v3,   where="post", color="teal",      lw=1.5, label="End cap L (3)  [DC]")
+    ax1.step(t, v8,   where="post", color="teal",      lw=1.5, ls="--", label="End cap R (8)  [DC]")
+    ax1.step(t, v6,   where="post", color="goldenrod", lw=1.5, label="Ring L (6)  [DC]")
+    ax1.step(t, v7,   where="post", color="goldenrod", lw=1.5, ls="--", label="Ring R (7)  [DC]")
+    ax1.step(t, v13,  where="post", color="sienna",    lw=1.5, ls=(0,(4,1,1,1)), label="Ring brake (13)  [DC]")
+    ax1.step(t, vrf,  where="post", color="crimson",   lw=1.5, ls=":",  label=f"RF V₀  (f={f_RF:.0f} Hz)")
     ax1.set_ylabel("Voltage (V)")
     ax1.set_title(f"Main trap (Z-axis) — voltages_{OUT_NUMBER}.csv")
     ax1.legend(fontsize=8, ncol=3)

@@ -70,11 +70,11 @@ adjustable voltage_file_number = 1
 local g_simion = 9.81e-9  -- mm/us²
 
 -- ── Voltage schedule (populated from file) ───────────────────────────────────
--- Main trap DC: _v3=endcap_L, _v6=ring_L, _v7=ring_R, _v8=endcap_R
+-- Main trap DC: _v3=endcap_L, _v6=ring_L, _v7=ring_R, _v8=endcap_R, _v13=ring_brake
 -- Perp trap DC: _v11=trapping_lens_holder, _v12=collection_lens_holder
 -- RF envelopes: _v_rf=main trap, _v_rf2=perp trap
 local _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
-local _v11, _v12, _v_rf2 = {}, {}, {}
+local _v11, _v12, _v13, _v_rf2 = {}, {}, {}, {}
 
 local function _interp(t_tbl, v_tbl, t)
   if #t_tbl == 0 then return 0.0 end
@@ -98,7 +98,7 @@ local _traj_step  = 0   -- per-ion step counter for stride
 function segment.initialize_run()
   -- Clear all schedule tables so re-runs don't accumulate rows
   _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
-  _v11, _v12, _v_rf2 = {}, {}, {}
+  _v11, _v12, _v13, _v_rf2 = {}, {}, {}, {}
 
   do
     local vpath = D .. "voltages_" .. math.floor(voltage_file_number) .. ".csv"
@@ -135,14 +135,15 @@ function segment.initialize_run()
 
       -- Map column names to destination tables
       local dest = {
-        ["V_endcap"]   = _v3,
-        ["V_endcap_R"] = _v8,
-        ["V_ring_L"]   = _v6,
-        ["V_ring_R"]   = _v7,
-        ["V_RF"]       = _v_rf,
-        ["V_RF2"]      = _v_rf2,
-        ["V_trap_lens"] = _v11,
-        ["V_coll_lens"] = _v12,
+        ["V_endcap"]     = _v3,
+        ["V_endcap_R"]   = _v8,
+        ["V_ring_L"]     = _v6,
+        ["V_ring_R"]     = _v7,
+        ["V_ring_brake"] = _v13,
+        ["V_RF"]         = _v_rf,
+        ["V_RF2"]        = _v_rf2,
+        ["V_trap_lens"]  = _v11,
+        ["V_coll_lens"]  = _v12,
       }
 
       for line in vf:lines() do
@@ -171,14 +172,15 @@ function segment.initialize_run()
             name .. ":", #tbl, tbl[1], tbl[#tbl]))
         end
       end
-      _ch("V_endcap",   _v3)
-      _ch("V_endcap_R", _v8)
-      _ch("V_ring_L",   _v6)
-      _ch("V_ring_R",   _v7)
-      _ch("V_RF",       _v_rf)
-      _ch("V_RF2",      _v_rf2)
-      _ch("V_trap_lens", _v11)
-      _ch("V_coll_lens", _v12)
+      _ch("V_endcap",     _v3)
+      _ch("V_endcap_R",   _v8)
+      _ch("V_ring_L",     _v6)
+      _ch("V_ring_R",     _v7)
+      _ch("V_ring_brake", _v13)
+      _ch("V_RF",         _v_rf)
+      _ch("V_RF2",        _v_rf2)
+      _ch("V_trap_lens",  _v11)
+      _ch("V_coll_lens",  _v12)
     else
       simion.print("WARNING: voltage file not found: " .. vpath .. "\n")
     end
@@ -233,8 +235,10 @@ function segment.fast_adjust()
   if #_v11 > 0 then adj_elect[11] = _interp(_vt, _v11, t) end
   if #_v12 > 0 then adj_elect[12] = _interp(_vt, _v12, t) end
 
-  -- Electrodes 13, 14 (glass lenses) are at 0 V (floating/grounded).
-  -- Update to apply surface charges here if dielectric treatment is implemented.
+  -- Braking ring electrode (electrode 13)
+  if #_v13 > 0 then adj_elect[13] = _interp(_vt, _v13, t) end
+
+  -- Electrodes 14, 15 (glass lenses) are dielectric — not driven here.
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
