@@ -98,16 +98,19 @@ locate(25, 8, 132) {
   }
 
   -- ── Dielectric lenses ───────────────────────────────────────────────────────
-  -- Lenses are defined as dielectric regions (SIMION 8.2 dielectric mode).
-  -- ε_r = EPSILON_GLASS, set at the top of this file.
-  -- No special flag is needed on pa_define; the dielectric{} modifier here
-  -- is sufficient to activate dielectric solving for these regions.
+  -- PLACEHOLDER: lenses are glass (ε_r = EPSILON_GLASS defined above).
+  -- Correct SIMION 8.2 GEM syntax for dielectric regions is not confirmed;
+  -- check the SIMION manual / Examples folder for a .gem file that uses
+  -- a dielectric material and substitute the correct modifier on e(13)/e(14).
+  -- For now these are defined as conductors at 0 V so the file can be refined.
+  -- This approximation is reasonable for initial trajectory work (glass only
+  -- weakly perturbs the field at ε_r ≈ 3).
 
-  e(13, dielectric{epsilon=EPSILON_GLASS}) {  -- trapping_lens (glass, ε_r = EPSILON_GLASS — see PLACEHOLDER above)
+  e(13) {  -- trapping_lens  (glass, ε_r = EPSILON_GLASS — dielectric treatment pending)
     stl(D.."trapping_lens.stl",  4.042, 19.586, 275.984)
   }
 
-  e(14, dielectric{epsilon=EPSILON_GLASS}) {  -- collection_lens (glass, ε_r = EPSILON_GLASS — see PLACEHOLDER above)
+  e(14) {  -- collection_lens (glass, ε_r = EPSILON_GLASS — dielectric treatment pending)
     stl(D.."collection_lens.stl",  -6.582, 19.530, 275.933)
   }
 
