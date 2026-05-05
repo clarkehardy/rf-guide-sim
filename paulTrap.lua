@@ -12,7 +12,7 @@ local amu = 1.66054e-27   -- kg per amu
 
 -- ── Gas: nitrogen at 1 mbar, 293 K ───────────────────────────────────────────
 local T_gas = 293         -- K
-local P_gas = 0.1         -- Pa  (1e-3 mbar)
+local P_gas = 100         -- Pa  (1 mbar)
 local m_N2  = 28 * amu    -- kg
 -- Mean molecular speed  c_bar = sqrt(8 k_B T / (pi m))
 local c_bar = math.sqrt(8 * kB * T_gas / (math.pi * m_N2))  -- ~471 m/s
@@ -252,14 +252,9 @@ end
 -- ion_ax/y/z_mm already contain the electric field acceleration [mm/us²].
 -- We apply Epstein drag + gravity using the finite-timestep correction from
 -- SIMION's drag.lua example (avoids underestimating drag over long time steps).
+-- v_stop is also checked here: segment.terminate is only called at the final
+-- termination event, NOT every timestep, so the check must live here.
 -- ─────────────────────────────────────────────────────────────────────────────
-function segment.terminate()
-  if v_stop > 0 then
-    local speed = math.sqrt(ion_vx_mm^2 + ion_vy_mm^2 + ion_vz_mm^2)
-    if speed < v_stop then ion_splat = 1 end
-  end
-end
-
 function segment.accel_adjust()
   if ion_time_step == 0 then return end
 
@@ -275,6 +270,13 @@ function segment.accel_adjust()
     ion_ax_mm = factor * (ion_ax_mm - g * ion_vx_mm)
     ion_ay_mm = factor * (ion_ay_mm - g * ion_vy_mm - g_simion)
     ion_az_mm = factor * (ion_az_mm - g * ion_vz_mm)
+  end
+
+  -- Terminate when speed drops below v_stop (checked every timestep here,
+  -- not in segment.terminate which only fires at the final termination event).
+  if v_stop > 0 then
+    local speed = math.sqrt(ion_vx_mm^2 + ion_vy_mm^2 + ion_vz_mm^2)
+    if speed < v_stop then ion_splat = 1 end
   end
 
   -- Record trajectory (Fusion world coordinates)

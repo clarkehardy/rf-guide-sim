@@ -101,8 +101,8 @@ V_DC2 = 70 * np.ones_like(times)
 # ── Perpendicular trap DC voltages ────────────────────────────────────────────
 # PLACEHOLDER: Set axial confinement voltages for the perpendicular trap.
 # V_trap_lens (electrode 11) and V_coll_lens (electrode 12) act as end caps.
-V_trap_lens = 50 * np.ones_like(times)   # PLACEHOLDER — trapping_lens_holder bias (V)
-V_coll_lens = 50 * np.ones_like(times)   # PLACEHOLDER — collection_lens_holder bias (V)
+V_trap_lens = 50 * np.ones_like(times)
+V_coll_lens = 80 * np.ones_like(times)
 
 SCHEDULE = list(np.vstack((
     times,

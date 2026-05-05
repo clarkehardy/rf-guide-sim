@@ -280,7 +280,7 @@ def main():
     if args.save:
         print(f"Saving {n_frames} frames to {args.save} …")
         ani.save(args.save, fps=args.fps,
-                 writer=animation.FFMpegWriter(fps=args.fps, bitrate=2000))
+                 writer='ffmpeg', bitrate=2000)
         print(f"Saved: {args.save}")
     else:
         plt.show()
