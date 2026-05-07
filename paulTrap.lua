@@ -33,8 +33,10 @@ local _drag_scale    = 1.0
 local _v_stop        = 1e-5             -- [mm/µs]
 local _record_stride = 20
 local _gem_off       = {x=25.0, y=8.0, z=132.0}  -- GEM → Fusion offsets [mm]
-local _triggers      = {}              -- {z_mm, electrodes={...}} list
-local _trigger_fire_time = {}          -- [i] = TOF when trigger i fired; nil = unfired
+local _triggers           = {}         -- {z_mm, electrodes={...}} list
+local _trigger_fired      = {}         -- [i] = true once fired, per-ion reset
+local _trigger_fire_time  = {}         -- [i] = TOF when trigger i fired, per-ion reset
+local _trig_for_electrode = {}         -- electrode_num → trigger index, built in initialize_run
 
 -- ── Voltage schedule tables (populated from CSV in initialize_run()) ──────────
 local _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
@@ -51,6 +53,15 @@ local function _interp(t_tbl, v_tbl, t)
   end
   local frac = (t - t_tbl[lo]) / (t_tbl[hi] - t_tbl[lo])
   return v_tbl[lo] + frac * (v_tbl[hi] - v_tbl[lo])
+end
+
+-- Returns the effective schedule time for electrode en.
+-- Not triggered → t.  Trigger fired → t − t_fire.  Trigger not yet fired → false.
+local function _trig_t(en, t)
+  local i = _trig_for_electrode[en]
+  if not i then return t end
+  if not _trigger_fired[i] then return false end
+  return t - _trigger_fire_time[i]
 end
 
 -- ── Trajectory file ───────────────────────────────────────────────────────────
@@ -80,6 +91,10 @@ function segment.initialize_run()
   _record_stride = cfg.record_stride or 20
   _gem_off       = cfg.gem_offset    or {x=25.0, y=8.0, z=132.0}
   _triggers      = cfg.triggers      or {}
+  _trig_for_electrode = {}
+  for i, trig in ipairs(_triggers) do
+    for _, en in ipairs(trig.electrodes) do _trig_for_electrode[en] = i end
+  end
 
   -- Env vars SIMION_VOL_FILE / SIMION_RUN_NUM override the adjustable values.
   -- Set them in the shell (headless runs); leave unset to use the GUI panel.
@@ -116,43 +131,49 @@ function segment.initialize_run()
 
   -- ── Define particles from config ─────────────────────────────────────────
   if cfg.particles then
-    local p_cfg  = cfg.particles
-    local charge = p_cfg.charge or 100
+    local p_cfg    = cfg.particles
+    local charge   = p_cfg.charge or 100
     local mass_amu = m_p / amu
-    local F = simion.fly2
-    local beams = {}
+    local F        = simion.fly2
+    local beams    = {}
+    local total_n  = 0
     for _, s in ipairs(p_cfg.starts or {}) do
-      -- Convert az/el (degrees, SIMION convention) to unit vector for F.vector.
-      -- az=0,el=0 → +Z; az=90,el=0 → +X; el=90 → +Y.
-      local el_r = math.rad(s.el or 0)
-      local az_r = math.rad(s.az or 0)
-      local dx = math.cos(el_r) * math.sin(az_r)
-      local dy = math.sin(el_r)
-      local dz = math.cos(el_r) * math.cos(az_r)
-      local ke = s.ke_ev or 0
+      local ke  = s.ke_ev or 0
+      local gx  = s.x_mm + _gem_off.x
+      local gy  = s.y_mm + _gem_off.y
+      local gz  = s.z_mm + _gem_off.z
+      local sig = s.sigma_mm
       local beam_def = {
-        n = 1, tob = 0,
+        n      = s.n or 1,
+        tob    = 0,
         mass   = mass_amu,
         charge = charge,
         cwf = 1, color = 0,
         ke       = ke,
-        position = F.vector(
-          s.x_mm + _gem_off.x,
-          s.y_mm + _gem_off.y,
-          s.z_mm + _gem_off.z
-        ),
+        position = sig
+          and F.gaussian3d_distribution {
+                mean  = F.vector(gx, gy, gz),
+                stdev = F.vector(sig.x or 0, sig.y or 0, sig.z or 0)
+              }
+          or  F.vector(gx, gy, gz),
       }
       if ke ~= 0 then
-        beam_def.direction = F.cone_direction_distribution {
-          axis = F.vector(dx, dy, dz), half_angle = 0, fill = true
-        }
+        -- az=0,el=0 → +Z;  az=90,el=0 → +X;  el=90 → +Y
+        local el_r = math.rad(s.el or 0)
+        local az_r = math.rad(s.az or 0)
+        beam_def.direction = F.vector(
+          math.cos(el_r) * math.sin(az_r),
+          math.sin(el_r),
+          math.cos(el_r) * math.cos(az_r)
+        )
       end
       table.insert(beams, F.standard_beam(beam_def))
+      total_n = total_n + (s.n or 1)
     end
     simion.experimental.add_particles { F.particles(beams) }
     simion.print(string.format(
-      "Particles: %d defined from config  (charge=%de, mass=%.3e amu)\n",
-      #beams, charge, mass_amu))
+      "Particles: %d total (%d beams) from config  (charge=%de, mass=%.3e amu)\n",
+      total_n, #beams, charge, mass_amu))
   end
 
   -- ── Clear and reload voltage schedule ───────────────────────────────────
@@ -267,6 +288,7 @@ end
 function segment.initialize()
   _traj_step = 0
   -- Reset trigger state for this ion (triggers are independent per ion).
+  _trigger_fired     = {}
   _trigger_fire_time = {}
 end
 
@@ -277,7 +299,7 @@ end
 function segment.fast_adjust()
   local t = ion_time_of_flight
 
-  -- Main trap RF (electrodes 1, 2, 4, 5)
+  -- Main trap RF (electrodes 1, 2, 4, 5) — never triggered, always uses absolute TOF
   local amp  = #_v_rf > 0 and _interp(_vt, _v_rf, t) or _V0_default
   local V_RF = amp * math.cos(_rf_omega * t)
   adj_elect[1] =  V_RF   -- rod pair 1, left   (+RF phase)
@@ -285,37 +307,37 @@ function segment.fast_adjust()
   adj_elect[4] =  V_RF   -- rod pair 1, right  (+RF phase)
   adj_elect[5] = -V_RF   -- rod pair 2, right  (-RF phase)
 
-  -- Main trap DC (electrodes 3, 6, 7, 8)
-  if #_v3  > 0 then adj_elect[3]  = _interp(_vt, _v3,  t) end
-  if #_v6  > 0 then adj_elect[6]  = _interp(_vt, _v6,  t) end
-  if #_v7  > 0 then adj_elect[7]  = _interp(_vt, _v7,  t) end
-  if #_v8  > 0 then adj_elect[8]  = _interp(_vt, _v8,  t) end
+  -- Main trap DC (electrodes 3, 6, 7, 8).
+  -- For triggered electrodes: 0 V until fired, then schedule runs from t=0 of that schedule.
+  local t3 = _trig_t(3, t); if t3 then if #_v3 > 0 then adj_elect[3]  = _interp(_vt, _v3,  t3) end else adj_elect[3]  = 0 end
+  local t6 = _trig_t(6, t); if t6 then if #_v6 > 0 then adj_elect[6]  = _interp(_vt, _v6,  t6) end else adj_elect[6]  = 0 end
+  local t7 = _trig_t(7, t); if t7 then if #_v7 > 0 then adj_elect[7]  = _interp(_vt, _v7,  t7) end else adj_elect[7]  = 0 end
+  local t8 = _trig_t(8, t); if t8 then if #_v8 > 0 then adj_elect[8]  = _interp(_vt, _v8,  t8) end else adj_elect[8]  = 0 end
 
-  -- Perpendicular trap RF + DC bias (electrodes 9, 10)
-  local amp2  = #_v_rf2 > 0 and _interp(_vt, _v_rf2, t) or _V0_2_default
-  local dc2   = #_v_dc2  > 0 and _interp(_vt, _v_dc2,  t) or 0.0
-  local V_RF2 = amp2 * math.cos(_rf_omega_2 * t)
-  adj_elect[9]  =  V_RF2 + dc2  -- trap rod pair 1, TL+BR
-  adj_elect[10] = -V_RF2 + dc2  -- trap rod pair 2, TR+BL
+  -- Perpendicular trap RF + DC bias (electrodes 9, 10).
+  -- Amplitude envelope and DC bias use trigger-relative time so the trapping
+  -- pulse always starts from V(0) when the particle arrives.
+  -- The RF carrier uses absolute t to maintain phase continuity.
+  local t9 = _trig_t(9, t)
+  if t9 then
+    local amp2  = #_v_rf2 > 0 and _interp(_vt, _v_rf2, t9) or _V0_2_default
+    local dc2   = #_v_dc2  > 0 and _interp(_vt, _v_dc2,  t9) or 0.0
+    local V_RF2 = amp2 * math.cos(_rf_omega_2 * t)
+    adj_elect[9]  =  V_RF2 + dc2   -- trap rod pair 1, TL+BR
+    adj_elect[10] = -V_RF2 + dc2   -- trap rod pair 2, TR+BL
+  else
+    adj_elect[9]  = 0
+    adj_elect[10] = 0
+  end
 
   -- Perpendicular trap DC (electrodes 11, 12)
-  if #_v11 > 0 then adj_elect[11] = _interp(_vt, _v11, t) end
-  if #_v12 > 0 then adj_elect[12] = _interp(_vt, _v12, t) end
+  local t11 = _trig_t(11, t); if t11 then if #_v11 > 0 then adj_elect[11] = _interp(_vt, _v11, t11) end else adj_elect[11] = 0 end
+  local t12 = _trig_t(12, t); if t12 then if #_v12 > 0 then adj_elect[12] = _interp(_vt, _v12, t12) end else adj_elect[12] = 0 end
 
   -- Braking ring electrode (electrode 13)
-  if #_v13 > 0 then adj_elect[13] = _interp(_vt, _v13, t) end
+  local t13 = _trig_t(13, t); if t13 then if #_v13 > 0 then adj_elect[13] = _interp(_vt, _v13, t13) end else adj_elect[13] = 0 end
 
   -- Electrodes 14, 15 (glass lenses) are dielectric — not driven here.
-
-  -- Trigger mask: electrodes belonging to unfired triggers are held at 0 V.
-  -- Applied last so this overrides whatever the schedule set above.
-  for i, trig in ipairs(_triggers) do
-    if not _trigger_fire_time[i] then
-      for _, en in ipairs(trig.electrodes) do
-        adj_elect[en] = 0.0
-      end
-    end
-  end
 end
 
 
@@ -368,7 +390,8 @@ function segment.other_actions()
   -- Trigger detection: fire when Fusion-Z first reaches the threshold.
   local z_fusion = ion_pz_mm - _gem_off.z
   for i, trig in ipairs(_triggers) do
-    if not _trigger_fire_time[i] and z_fusion >= trig.z_mm then
+    if not _trigger_fired[i] and z_fusion >= trig.z_mm then
+      _trigger_fired[i]     = true
       _trigger_fire_time[i] = ion_time_of_flight
       simion.print(string.format(
         "Trigger %d fired: ion %d at Z=%.2f mm, t=%.1f µs\n",

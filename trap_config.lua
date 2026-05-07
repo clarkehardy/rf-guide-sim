@@ -5,7 +5,7 @@
 return {
 
   -- ── Gas ──────────────────────────────────────────────────────────────────
-  pressure_pa        = 0.1,    -- Pa  (0.1 Pa = 1 mbar)
+  pressure_pa        = 0.1,    -- Pa  (100 Pa = 1 mbar)
   temperature_k      = 293,    -- K
   gas_molar_mass_amu = 28.0,   -- amu  (28 = N2)
 
@@ -34,15 +34,17 @@ return {
   },
 
   -- ── Particle definitions ──────────────────────────────────────────────────
-  -- Positions are in Fusion world coordinates (mm); the Lua code adds gem_offset
-  -- to convert to GEM (workbench) coordinates automatically.
-  -- charge:  elementary charges (e)
-  -- ke_ev:   kinetic energy in eV
-  -- az, el:  SIMION direction angles in degrees (azimuth, elevation from +Z)
+  -- Positions are in Fusion world coordinates (mm); gem_offset is added automatically.
+  -- charge:    elementary charges (e)
+  -- ke_ev:     kinetic energy in eV
+  -- az, el:    direction angles in degrees (az=0,el=0 → +Z; az=90,el=0 → +X; el=90 → +Y)
+  -- n:         number of particles drawn from this start (default 1)
+  -- sigma_mm:  Gaussian 1-σ spread per axis {x,y,z} in mm; omit for a point source
   particles = {
     charge = 100,
     starts = {
-      { x_mm = 0, y_mm = 0, z_mm = -50, ke_ev = 0, az = 0, el = 0 },
+      { x_mm = 0, y_mm = 0, z_mm = -50, ke_ev = 0, n = 1,
+        sigma_mm = { x = 0, y = 0, z = 0 } },
     },
   },
 
