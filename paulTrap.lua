@@ -122,21 +122,34 @@ function segment.initialize_run()
     local F = simion.fly2
     local beams = {}
     for _, s in ipairs(p_cfg.starts or {}) do
-      table.insert(beams, F.standard_beam {
+      -- Convert az/el (degrees, SIMION convention) to unit vector for F.vector.
+      -- az=0,el=0 → +Z; az=90,el=0 → +X; el=90 → +Y.
+      local el_r = math.rad(s.el or 0)
+      local az_r = math.rad(s.az or 0)
+      local dx = math.cos(el_r) * math.sin(az_r)
+      local dy = math.sin(el_r)
+      local dz = math.cos(el_r) * math.cos(az_r)
+      local ke = s.ke_ev or 0
+      local beam_def = {
         n = 1, tob = 0,
         mass   = mass_amu,
         charge = charge,
         cwf = 1, color = 0,
-        ke        = s.ke_ev or 0,
-        direction = F.vector(s.az or 0, s.el or 0),
-        position  = F.vector(
+        ke       = ke,
+        position = F.vector(
           s.x_mm + _gem_off.x,
           s.y_mm + _gem_off.y,
           s.z_mm + _gem_off.z
         ),
-      })
+      }
+      if ke ~= 0 then
+        beam_def.direction = F.cone_direction_distribution {
+          axis = F.vector(dx, dy, dz), half_angle = 0, fill = true
+        }
+      end
+      table.insert(beams, F.standard_beam(beam_def))
     end
-    simion.experimental.add_particles { F.particles(table.unpack(beams)) }
+    simion.experimental.add_particles { F.particles(beams) }
     simion.print(string.format(
       "Particles: %d defined from config  (charge=%de, mass=%.3e amu)\n",
       #beams, charge, mass_amu))
