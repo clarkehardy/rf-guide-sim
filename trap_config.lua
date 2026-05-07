@@ -35,15 +35,14 @@ return {
 
   -- ── Particle definitions ──────────────────────────────────────────────────
   -- Positions are in Fusion world coordinates (mm); gem_offset is added automatically.
-  -- charge:    elementary charges (e)
-  -- ke_ev:     kinetic energy in eV
+  -- Particle count, charge, and mass are set in the SIMION workbench (.iob).
+  -- ke_ev:     kinetic energy in eV  (0 = stationary start)
   -- az, el:    direction angles in degrees (az=0,el=0 → +Z; az=90,el=0 → +X; el=90 → +Y)
-  -- n:         number of particles drawn from this start (default 1)
-  -- sigma_mm:  Gaussian 1-σ spread per axis {x,y,z} in mm; omit for a point source
+  -- sigma_mm:  Gaussian 1-σ spread per axis {x,y,z} in mm; omit or zero for point source
+  -- Multiple entries are assigned to ions round-robin by ion number.
   particles = {
-    charge = 100,
     starts = {
-      { x_mm = 0, y_mm = 0, z_mm = -50, ke_ev = 0, n = 1,
+      { x_mm = 0, y_mm = 0, z_mm = -20, ke_ev = 0,
         sigma_mm = { x = 0, y = 0, z = 0 } },
     },
   },

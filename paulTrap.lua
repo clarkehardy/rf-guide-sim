@@ -37,6 +37,8 @@ local _triggers           = {}         -- {z_mm, electrodes={...}} list
 local _trigger_fired      = {}         -- [i] = true once fired, per-ion reset
 local _trigger_fire_time  = {}         -- [i] = TOF when trigger i fired, per-ion reset
 local _trig_for_electrode = {}         -- electrode_num → trigger index, built in initialize_run
+local _particle_starts   = {}          -- [{x_mm,y_mm,z_mm,ke_ev,sigma_mm,...}] from config
+local _particle_mass_kg  = 0.0         -- sphere mass in kg, for converting KE → velocity
 
 -- ── Voltage schedule tables (populated from CSV in initialize_run()) ──────────
 local _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
@@ -53,6 +55,13 @@ local function _interp(t_tbl, v_tbl, t)
   end
   local frac = (t - t_tbl[lo]) / (t_tbl[hi] - t_tbl[lo])
   return v_tbl[lo] + frac * (v_tbl[hi] - v_tbl[lo])
+end
+
+-- Standard-normal sample via Box-Muller, using SIMION's built-in rand().
+local function _randn()
+  local u1
+  repeat u1 = rand() until u1 > 1e-15
+  return math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * rand())
 end
 
 -- Returns the effective schedule time for electrode en.
@@ -129,51 +138,15 @@ function segment.initialize_run()
     end
   end
 
-  -- ── Define particles from config ─────────────────────────────────────────
-  if cfg.particles then
-    local p_cfg    = cfg.particles
-    local charge   = p_cfg.charge or 100
-    local mass_amu = m_p / amu
-    local F        = simion.fly2
-    local beams    = {}
-    local total_n  = 0
-    for _, s in ipairs(p_cfg.starts or {}) do
-      local ke  = s.ke_ev or 0
-      local gx  = s.x_mm + _gem_off.x
-      local gy  = s.y_mm + _gem_off.y
-      local gz  = s.z_mm + _gem_off.z
-      local sig = s.sigma_mm
-      local beam_def = {
-        n      = s.n or 1,
-        tob    = 0,
-        mass   = mass_amu,
-        charge = charge,
-        cwf = 1, color = 0,
-        ke       = ke,
-        position = sig
-          and F.gaussian3d_distribution {
-                mean  = F.vector(gx, gy, gz),
-                stdev = F.vector(sig.x or 0, sig.y or 0, sig.z or 0)
-              }
-          or  F.vector(gx, gy, gz),
-      }
-      if ke ~= 0 then
-        -- az=0,el=0 → +Z;  az=90,el=0 → +X;  el=90 → +Y
-        local el_r = math.rad(s.el or 0)
-        local az_r = math.rad(s.az or 0)
-        beam_def.direction = F.vector(
-          math.cos(el_r) * math.sin(az_r),
-          math.sin(el_r),
-          math.cos(el_r) * math.cos(az_r)
-        )
-      end
-      table.insert(beams, F.standard_beam(beam_def))
-      total_n = total_n + (s.n or 1)
-    end
-    simion.experimental.add_particles { F.particles(beams) }
+  -- ── Load particle start positions from config ─────────────────────────────
+  -- Positions and velocities are applied per-ion in segment.initialize().
+  -- Particle count, charge, and mass are still set in the SIMION workbench.
+  _particle_starts  = (cfg.particles and cfg.particles.starts) or {}
+  _particle_mass_kg = m_p
+  if #_particle_starts > 0 then
     simion.print(string.format(
-      "Particles: %d total (%d beams) from config  (charge=%de, mass=%.3e amu)\n",
-      total_n, #beams, charge, mass_amu))
+      "Particle starts: %d config entry/entries  (mass=%.3e kg)\n",
+      #_particle_starts, m_p))
   end
 
   -- ── Clear and reload voltage schedule ───────────────────────────────────
@@ -290,6 +263,27 @@ function segment.initialize()
   -- Reset trigger state for this ion (triggers are independent per ion).
   _trigger_fired     = {}
   _trigger_fire_time = {}
+
+  -- Override start position and velocity from config.
+  -- Cycles round-robin through starts entries if there are multiple.
+  if #_particle_starts > 0 then
+    local s   = _particle_starts[((ion_number - 1) % #_particle_starts) + 1]
+    local sig = s.sigma_mm
+    ion_px_mm = _gem_off.x + s.x_mm + (sig and sig.x or 0) * _randn()
+    ion_py_mm = _gem_off.y + s.y_mm + (sig and sig.y or 0) * _randn()
+    ion_pz_mm = _gem_off.z + s.z_mm + (sig and sig.z or 0) * _randn()
+    local ke = s.ke_ev or 0
+    if ke == 0 then
+      ion_vx_mm = 0; ion_vy_mm = 0; ion_vz_mm = 0
+    else
+      local v    = math.sqrt(2 * ke * 1.602e-19 / _particle_mass_kg) * 1e-3
+      local el_r = math.rad(s.el or 0)
+      local az_r = math.rad(s.az or 0)
+      ion_vx_mm = v * math.cos(el_r) * math.sin(az_r)
+      ion_vy_mm = v * math.sin(el_r)
+      ion_vz_mm = v * math.cos(el_r) * math.cos(az_r)
+    end
+  end
 end
 
 
@@ -394,7 +388,7 @@ function segment.other_actions()
       _trigger_fired[i]     = true
       _trigger_fire_time[i] = ion_time_of_flight
       simion.print(string.format(
-        "Trigger %d fired: ion %d at Z=%.2f mm, t=%.1f µs\n",
+        "Trigger %d fired: ion %d at Z=%.2f mm, t=%.1f us\n",
         i, ion_number, z_fusion, ion_time_of_flight))
     end
   end
