@@ -18,6 +18,7 @@ Usage
 
 import argparse
 import os
+import re
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -96,9 +97,41 @@ def load_voltages(path):
     return {k: np.array(v) for k, v in cols.items()}
 
 
+def load_triggers(config_path):
+    """Parse active trigger entries from trap_config.lua."""
+    if not os.path.exists(config_path):
+        return []
+    with open(config_path) as f:
+        text = f.read()
+    text = re.sub(r'--[^\n]*', '', text)   # strip Lua line comments
+    triggers = []
+    for m in re.finditer(
+        r'\{\s*z_mm\s*=\s*([\d.e+\-]+)\s*,\s*electrodes\s*=\s*\{([^}]*)\}',
+        text
+    ):
+        triggers.append({
+            'z_mm':       float(m.group(1)),
+            'electrodes': [int(x) for x in re.findall(r'\d+', m.group(2))],
+        })
+    return triggers
+
+
+def compute_fire_times(ions, triggers):
+    """For each trigger, return the TOF when the first ion crosses z_mm."""
+    times = []
+    for trig in triggers:
+        t_fire = np.inf
+        for data in ions.values():
+            idx = np.where(data['z'] >= trig['z_mm'])[0]
+            if len(idx):
+                t_fire = min(t_fire, data['t'][idx[0]])
+        times.append(t_fire if np.isfinite(t_fire) else None)
+    return times
+
+
 # ── Geometry drawing ──────────────────────────────────────────────────────────
 
-def draw_geometry(ax):
+def draw_geometry(ax, triggers=(), trig_colors=()):
     g = GEO
     rod_kw = dict(facecolor=(0.6, 0.6, 0.6), edgecolor="none", alpha=0.30, zorder=1)
 
@@ -121,20 +154,29 @@ def draw_geometry(ax):
     pz0, pz1 = g["perp_trap_z"]
     ax.axvspan(pz0, pz1, color="lavender", alpha=0.55, zorder=0, label="Perp trap")
 
+    for i, trig in enumerate(triggers):
+        c = trig_colors[i] if i < len(trig_colors) else "darkorchid"
+        elec_str = ", ".join(str(e) for e in trig["electrodes"])
+        ax.axvline(trig["z_mm"], color=c, lw=1.5, ls=(0, (4, 2)), alpha=0.85,
+                   label=f"Trigger {i+1}: Z={trig['z_mm']:.0f} mm → {{{elec_str}}}")
+
     ax.set_xlim(g["view_z"])
     ax.set_ylim(g["view_y"])
     ax.set_xlabel("Z (mm)")
     ax.set_ylabel("Y (mm)")
     ax.set_title("Side view  (Z = trap axis,  Y = height)")
-    ax.legend(loc="lower left", fontsize=7, ncol=4, framealpha=0.8)
+    ncol = 4 + len(triggers)
+    ax.legend(loc="lower left", fontsize=7, ncol=ncol, framealpha=0.8)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--traj",  default=os.path.join(BASE, "trajectories_1.csv"))
-    ap.add_argument("--volt",  default=os.path.join(BASE, "voltages_1.csv"))
+    ap.add_argument("--traj",   default=os.path.join(BASE, "trajectories_1.csv"))
+    ap.add_argument("--volt",   default=os.path.join(BASE, "voltages_1.csv"))
+    ap.add_argument("--config", default=os.path.join(BASE, "trap_config.lua"),
+                    help="Path to trap_config.lua (for trigger overlays)")
     ap.add_argument("--fps",   type=float, default=30.0)
     ap.add_argument("--speed", type=float, default=None,
                     help="µs of sim time per wall-second (default: 20 s total)")
@@ -144,6 +186,13 @@ def main():
 
     ions  = load_trajectories(args.traj)
     volts = load_voltages(args.volt)
+
+    _TRIG_PALETTE = ["darkorchid", "tomato", "mediumseagreen", "saddlebrown"]
+    triggers   = load_triggers(args.config)
+    trig_colors = [_TRIG_PALETTE[i % len(_TRIG_PALETTE)] for i in range(len(triggers))]
+    fire_times  = compute_fire_times(ions, triggers) if ions else []
+    if triggers and not ions:
+        fire_times = [None] * len(triggers)
 
     if not ions:
         sys.exit("No trajectory data found — run a SIMION simulation first.")
@@ -174,7 +223,7 @@ def main():
         ax_bot = None
 
     # ── Top panel ─────────────────────────────────────────────────────────────
-    draw_geometry(ax_top)
+    draw_geometry(ax_top, triggers=triggers, trig_colors=trig_colors)
 
     n_ions = len(ions)
     if n_ions <= 10:
@@ -243,6 +292,13 @@ def main():
             ax_bot.step(vt, volts["V_RF2"], where="post",
                         color="darkorange", lw=1.5, ls=(0, (3, 1, 1, 1)),
                         label="RF2 amplitude V₀")
+
+        for i, (trig, t_fire) in enumerate(zip(triggers, fire_times)):
+            if t_fire is not None:
+                c = trig_colors[i]
+                elec_str = ", ".join(str(e) for e in trig["electrodes"])
+                ax_bot.axvline(t_fire, color=c, lw=1.5, ls=(0, (4, 2)), alpha=0.85,
+                               label=f"Trigger {i+1} fires  (t={t_fire:.0f} µs, elec {{{elec_str}}})")
 
         vcursor = ax_bot.axvline(t_min, color="red", lw=1.0, ls="--", alpha=0.8, zorder=5)
         ax_bot.set_xlim(t_min, t_max)
