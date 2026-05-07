@@ -30,20 +30,24 @@ return {
   -- Example — activate lens holders when ion enters the perpendicular trap:
   --   { z_mm = 200.0, electrodes = {11, 12} },
   triggers = {
-    { z_mm = 276.0, electrodes = {9, 10, 11, 12} },
+    { z_mm = 286.0, electrodes = {9, 10, 11, 12} },
   },
 
   -- ── Particle definitions ──────────────────────────────────────────────────
+  -- n:         number of ions to simulate; workbench must have at least this many
+  -- charge:    elementary charges (e); overrides workbench value
+  -- mass:      derived from particle_radius_m and particle_density_kgm3 above
   -- Positions are in Fusion world coordinates (mm); gem_offset is added automatically.
-  -- Particle count, charge, and mass are set in the SIMION workbench (.iob).
-  -- ke_ev:     kinetic energy in eV  (0 = stationary start)
+  -- ke_ev:     kinetic energy in eV  (0 = stationary)
   -- az, el:    direction angles in degrees (az=0,el=0 → +Z; az=90,el=0 → +X; el=90 → +Y)
   -- sigma_mm:  Gaussian 1-σ spread per axis {x,y,z} in mm; omit or zero for point source
-  -- Multiple entries are assigned to ions round-robin by ion number.
+  -- Multiple starts entries are assigned round-robin by ion number.
   particles = {
+    n      = 1,
+    charge = 100,
     starts = {
-      { x_mm = 0, y_mm = 0, z_mm = -20, ke_ev = 0,
-        sigma_mm = { x = 0, y = 0, z = 0 } },
+      { x_mm = 0, y_mm = 19, z_mm = -78.5, ke_ev = 0,
+        sigma_mm = { x = 0.1, y = 0.1, z = 0.1 } },
     },
   },
 

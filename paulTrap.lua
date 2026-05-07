@@ -34,11 +34,15 @@ local _v_stop        = 1e-5             -- [mm/µs]
 local _record_stride = 20
 local _gem_off       = {x=25.0, y=8.0, z=132.0}  -- GEM → Fusion offsets [mm]
 local _triggers           = {}         -- {z_mm, electrodes={...}} list
-local _trigger_fired      = {}         -- [i] = true once fired, per-ion reset
-local _trigger_fire_time  = {}         -- [i] = TOF when trigger i fired, per-ion reset
 local _trig_for_electrode = {}         -- electrode_num → trigger index, built in initialize_run
-local _particle_starts   = {}          -- [{x_mm,y_mm,z_mm,ke_ev,sigma_mm,...}] from config
-local _particle_mass_kg  = 0.0         -- sphere mass in kg, for converting KE → velocity
+-- Per-ion trigger state (keyed by ion_number so simultaneous ions don't share state)
+local _ion_trig_fired     = {}         -- [ion_number][trig_idx] = true
+local _ion_trig_fire_time = {}         -- [ion_number][trig_idx] = TOF at firing
+local _particle_starts    = {}         -- [{x_mm,y_mm,z_mm,ke_ev,sigma_mm,...}] from config
+local _particle_mass_amu  = 0.0        -- sphere mass in amu, written to ion_mass
+local _particle_mass_kg   = 0.0        -- sphere mass in kg, for velocity ← KE conversion
+local _particle_charge    = 100        -- elementary charges, written to ion_charge
+local _particle_count     = 1          -- max ions to simulate; extras are splatted immediately
 
 -- ── Voltage schedule tables (populated from CSV in initialize_run()) ──────────
 local _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
@@ -64,13 +68,15 @@ local function _randn()
   return math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * rand())
 end
 
--- Returns the effective schedule time for electrode en.
--- Not triggered → t.  Trigger fired → t − t_fire.  Trigger not yet fired → false.
+-- Returns the effective schedule time for electrode en for the current ion.
+-- Not triggered → t.  Trigger fired → t − t_fire.  Not yet fired → false.
+-- Uses ion_number so simultaneous ions each see their own independent trigger state.
 local function _trig_t(en, t)
   local i = _trig_for_electrode[en]
   if not i then return t end
-  if not _trigger_fired[i] then return false end
-  return t - _trigger_fire_time[i]
+  local ft = _ion_trig_fired[ion_number]
+  if not ft or not ft[i] then return false end
+  return t - _ion_trig_fire_time[ion_number][i]
 end
 
 -- ── Trajectory file ───────────────────────────────────────────────────────────
@@ -124,10 +130,10 @@ function segment.initialize_run()
     "Config:  P=%.3f Pa,  T=%.0f K,  M_gas=%.0f amu\n",
     P_gas, T_gas, M_gas))
   simion.print(string.format(
-    "         r_p=%.0f nm,  rho_p=%.0f kg/m³,  m_p=%.3e kg\n",
+    "         r_p=%.0f nm,  rho_p=%.0f kg/m^3,  m_p=%.3e kg\n",
     r_p*1e9, rho_p, m_p))
   simion.print(string.format(
-    "         gamma=%.4e µs⁻¹,  drag_scale=%.1f\n",
+    "         gamma=%.4e us^-1,  drag_scale=%.1f\n",
     gamma_drag, _drag_scale))
 
   if #_triggers > 0 then
@@ -138,16 +144,18 @@ function segment.initialize_run()
     end
   end
 
-  -- ── Load particle start positions from config ─────────────────────────────
-  -- Positions and velocities are applied per-ion in segment.initialize().
-  -- Particle count, charge, and mass are still set in the SIMION workbench.
-  _particle_starts  = (cfg.particles and cfg.particles.starts) or {}
-  _particle_mass_kg = m_p
-  if #_particle_starts > 0 then
-    simion.print(string.format(
-      "Particle starts: %d config entry/entries  (mass=%.3e kg)\n",
-      #_particle_starts, m_p))
-  end
+  -- ── Load particle parameters from config ─────────────────────────────────
+  -- Position/velocity/mass/charge applied per-ion in segment.initialize().
+  -- Ion count: workbench must have >= n ions; extras are splatted immediately.
+  local pcfg         = cfg.particles or {}
+  _particle_starts   = pcfg.starts  or {}
+  _particle_mass_amu = m_p / amu
+  _particle_mass_kg  = m_p
+  _particle_charge   = pcfg.charge  or 100
+  _particle_count    = pcfg.n       or 1
+  simion.print(string.format(
+    "Particles: n=%d, charge=%de, mass=%.3e amu,  %d start entry/entries\n",
+    _particle_count, _particle_charge, _particle_mass_amu, #_particle_starts))
 
   -- ── Clear and reload voltage schedule ───────────────────────────────────
   _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
@@ -260,12 +268,21 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 function segment.initialize()
   _traj_step = 0
-  -- Reset trigger state for this ion (triggers are independent per ion).
-  _trigger_fired     = {}
-  _trigger_fire_time = {}
+  -- Allocate per-ion trigger tables (separate state for simultaneous ions).
+  _ion_trig_fired[ion_number]     = {}
+  _ion_trig_fire_time[ion_number] = {}
 
-  -- Override start position and velocity from config.
-  -- Cycles round-robin through starts entries if there are multiple.
+  -- Splat any ions beyond the configured count immediately (no flight).
+  if ion_number > _particle_count then
+    ion_splat = 1
+    return
+  end
+
+  -- Set mass and charge from config, overriding workbench values.
+  ion_mass   = _particle_mass_amu
+  ion_charge = _particle_charge
+
+  -- Override start position and velocity; cycles round-robin through starts entries.
   if #_particle_starts > 0 then
     local s   = _particle_starts[((ion_number - 1) % #_particle_starts) + 1]
     local sig = s.sigma_mm
@@ -383,10 +400,11 @@ function segment.other_actions()
 
   -- Trigger detection: fire when Fusion-Z first reaches the threshold.
   local z_fusion = ion_pz_mm - _gem_off.z
+  local fired    = _ion_trig_fired[ion_number]
   for i, trig in ipairs(_triggers) do
-    if not _trigger_fired[i] and z_fusion >= trig.z_mm then
-      _trigger_fired[i]     = true
-      _trigger_fire_time[i] = ion_time_of_flight
+    if not fired[i] and z_fusion >= trig.z_mm then
+      fired[i]                           = true
+      _ion_trig_fire_time[ion_number][i] = ion_time_of_flight
       simion.print(string.format(
         "Trigger %d fired: ion %d at Z=%.2f mm, t=%.1f us\n",
         i, ion_number, z_fusion, ion_time_of_flight))
