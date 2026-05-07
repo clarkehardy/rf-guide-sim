@@ -139,7 +139,7 @@ function segment.initialize_run()
   if #_triggers > 0 then
     for i, trig in ipairs(_triggers) do
       simion.print(string.format(
-        "Trigger %d:  Z >= %.1f mm (Fusion)  →  electrodes {%s}\n",
+        "Trigger %d:  Z >= %.1f mm (Fusion)  -->  electrodes {%s}\n",
         i, trig.z_mm, table.concat(trig.electrodes, ", ")))
     end
   end
@@ -392,6 +392,13 @@ end
 -- segment.other_actions: per-step logic that needs write access to ion_splat.
 -- ─────────────────────────────────────────────────────────────────────────────
 function segment.other_actions()
+  -- Terminate ions beyond the configured count.
+  -- ion_splat must be set here (other_actions) to actually take effect.
+  if ion_number > _particle_count then
+    ion_splat = 1
+    return
+  end
+
   -- Speed-based termination
   if _v_stop > 0 then
     local speed = math.sqrt(ion_vx_mm^2 + ion_vy_mm^2 + ion_vz_mm^2)
