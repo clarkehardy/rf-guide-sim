@@ -43,6 +43,7 @@ local _particle_mass_amu  = 0.0        -- sphere mass in amu, written to ion_mas
 local _particle_mass_kg   = 0.0        -- sphere mass in kg, for velocity ← KE conversion
 local _particle_charge    = 100        -- elementary charges, written to ion_charge
 local _particle_count     = 1          -- max ions to simulate; extras are splatted immediately
+local _ion_traj_step      = {}         -- [ion_number] = per-ion accel_adjust call counter
 
 -- ── Voltage schedule tables (populated from CSV in initialize_run()) ──────────
 local _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
@@ -81,7 +82,6 @@ end
 
 -- ── Trajectory file ───────────────────────────────────────────────────────────
 local _traj_file = nil
-local _traj_step = 0   -- per-ion step counter for stride
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -267,7 +267,7 @@ end
 
 -- ─────────────────────────────────────────────────────────────────────────────
 function segment.initialize()
-  _traj_step = 0
+  _ion_traj_step[ion_number] = 0
   -- Allocate per-ion trigger tables (separate state for simultaneous ions).
   _ion_trig_fired[ion_number]     = {}
   _ion_trig_fire_time[ion_number] = {}
@@ -375,8 +375,8 @@ function segment.accel_adjust()
 
   -- Trajectory recording (Fusion world coordinates)
   if _traj_file and _record_stride > 0 then
-    _traj_step = _traj_step + 1
-    if _traj_step % _record_stride == 0 then
+    _ion_traj_step[ion_number] = (_ion_traj_step[ion_number] or 0) + 1
+    if _ion_traj_step[ion_number] % _record_stride == 0 then
       _traj_file:write(string.format("%d,%.4f,%.5f,%.5f,%.5f\n",
         ion_number,
         ion_time_of_flight,

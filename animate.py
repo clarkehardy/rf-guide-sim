@@ -97,6 +97,17 @@ def load_voltages(path):
     return {k: np.array(v) for k, v in cols.items()}
 
 
+def load_n_particles(config_path):
+    """Read particles.n from trap_config.lua; returns None if not found."""
+    if not os.path.exists(config_path):
+        return None
+    with open(config_path) as f:
+        text = f.read()
+    text = re.sub(r'--[^\n]*', '', text)
+    m = re.search(r'\bparticles\b.*?\bn\s*=\s*(\d+)', text, re.DOTALL)
+    return int(m.group(1)) if m else None
+
+
 def load_triggers(config_path):
     """Parse active trigger entries from trap_config.lua."""
     if not os.path.exists(config_path):
@@ -186,6 +197,14 @@ def main():
 
     ions  = load_trajectories(args.traj)
     volts = load_voltages(args.volt)
+
+    # Keep only the first n ion IDs (by sorted order) to exclude workbench
+    # placeholder ions that are terminated on the first timestep.
+    n_cfg = load_n_particles(args.config)
+    if n_cfg is not None and len(ions) > n_cfg:
+        keep = sorted(ions.keys())[:n_cfg]
+        print(f"  Showing {n_cfg} of {len(ions)} ions (filtered by particles.n in config)")
+        ions = {k: ions[k] for k in keep}
 
     _TRIG_PALETTE = ["darkorchid", "tomato", "mediumseagreen", "saddlebrown"]
     triggers   = load_triggers(args.config)
