@@ -305,7 +305,7 @@ def main():
         ax_bot.set_xlabel("Time (µs)")
         ax_bot.set_ylabel("Voltage (V)")
         ax_bot.set_title("Electrode voltages")
-        ax_bot.legend(loc="upper right", fontsize=8)
+        ax_bot.legend(loc="upper right", fontsize=8, ncol=2)
         ax_bot.grid(True, alpha=0.25)
 
     # ── Animation ─────────────────────────────────────────────────────────────

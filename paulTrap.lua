@@ -4,6 +4,7 @@
 -- Gas, particle, drag, and trigger parameters are loaded from trap_config.lua.
 
 simion.workbench_program()
+simion.early_access(8.2)
 
 local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\"
 
@@ -111,6 +112,34 @@ function segment.initialize_run()
         "Trigger %d:  Z >= %.1f mm (Fusion)  →  electrodes {%s}\n",
         i, trig.z_mm, table.concat(trig.electrodes, ", ")))
     end
+  end
+
+  -- ── Define particles from config ─────────────────────────────────────────
+  if cfg.particles then
+    local p_cfg  = cfg.particles
+    local charge = p_cfg.charge or 100
+    local mass_amu = m_p / amu
+    local F = simion.fly2
+    local beams = {}
+    for _, s in ipairs(p_cfg.starts or {}) do
+      table.insert(beams, F.standard_beam {
+        n = 1, tob = 0,
+        mass   = mass_amu,
+        charge = charge,
+        cwf = 1, color = 0,
+        ke        = s.ke_ev or 0,
+        direction = F.vector(s.az or 0, s.el or 0),
+        position  = F.vector(
+          s.x_mm + _gem_off.x,
+          s.y_mm + _gem_off.y,
+          s.z_mm + _gem_off.z
+        ),
+      })
+    end
+    simion.experimental.add_particles { F.particles(table.unpack(beams)) }
+    simion.print(string.format(
+      "Particles: %d defined from config  (charge=%de, mass=%.3e amu)\n",
+      #beams, charge, mass_amu))
   end
 
   -- ── Clear and reload voltage schedule ───────────────────────────────────

@@ -30,7 +30,20 @@ return {
   -- Example — activate lens holders when ion enters the perpendicular trap:
   --   { z_mm = 200.0, electrodes = {11, 12} },
   triggers = {
-    -- { z_mm = 200.0, electrodes = {11, 12} },
+    { z_mm = 276.0, electrodes = {9, 10, 11, 12} },
+  },
+
+  -- ── Particle definitions ──────────────────────────────────────────────────
+  -- Positions are in Fusion world coordinates (mm); the Lua code adds gem_offset
+  -- to convert to GEM (workbench) coordinates automatically.
+  -- charge:  elementary charges (e)
+  -- ke_ev:   kinetic energy in eV
+  -- az, el:  SIMION direction angles in degrees (azimuth, elevation from +Z)
+  particles = {
+    charge = 100,
+    starts = {
+      { x_mm = 0, y_mm = 0, z_mm = -50, ke_ev = 0, az = 0, el = 0 },
+    },
   },
 
 }
