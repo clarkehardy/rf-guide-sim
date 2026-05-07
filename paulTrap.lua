@@ -80,6 +80,15 @@ function segment.initialize_run()
   _gem_off       = cfg.gem_offset    or {x=25.0, y=8.0, z=132.0}
   _triggers      = cfg.triggers      or {}
 
+  -- Env vars SIMION_VOL_FILE / SIMION_RUN_NUM override the adjustable values.
+  -- Set them in the shell (headless runs); leave unset to use the GUI panel.
+  if os.getenv("SIMION_VOL_FILE") then
+    voltage_file_number = tonumber(os.getenv("SIMION_VOL_FILE"))
+  end
+  if os.getenv("SIMION_RUN_NUM") then
+    run_number = tonumber(os.getenv("SIMION_RUN_NUM"))
+  end
+
   -- ── Compute Epstein drag rate ────────────────────────────────────────────
   local c_bar = math.sqrt(8 * kB * T_gas / (math.pi * M_gas * amu))
   local m_p   = (4/3) * math.pi * r_p^3 * rho_p

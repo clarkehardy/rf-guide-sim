@@ -31,19 +31,27 @@ RF frequency and amplitude envelopes:
     V_RF2      –  perpendicular trap zero-to-peak amplitude vs time [PLACEHOLDER]
 """
 
+import argparse
 import numpy as np
 import os
 
-BASE       = os.path.dirname(os.path.abspath(__file__))
-OUT_NUMBER = 1        # matches voltage_file_number in SIMION
+BASE = os.path.dirname(os.path.abspath(__file__))
+
+ap = argparse.ArgumentParser(description="Generate Paul trap voltage schedule CSV.")
+ap.add_argument("--out", type=int, default=1, metavar="N",
+                help="Output file number: writes voltages_N.csv (default: 1)")
+ap.add_argument("--no-preview", action="store_true",
+                help="Skip the matplotlib preview plot")
+_args = ap.parse_args()
+OUT_NUMBER = _args.out
 
 # ── RF parameters ─────────────────────────────────────────────────────────────
-f_RF  = 2.5e4          # Hz — carrier frequency of the main Paul trap (axis along Z)
+f_RF  = 6e3          # Hz — carrier frequency of the main Paul trap (axis along Z)
 
 # PLACEHOLDER: Set f_RF2 to the correct RF frequency for the perpendicular trap
 # (axis along X).  Stability parameter q ≈ 4eV₀/(m ω² r₀²) — use the known r₀
 # and target q < 0.908.
-f_RF2 = 3e3          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
+f_RF2 = 3.4e3 # 1.1e3          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
 
 # ── Pulse sequence ────────────────────────────────────────────────────────────
 # Each row: (time_us, V_endcap, V_ring_L, V_ring_R)
@@ -51,17 +59,6 @@ f_RF2 = 3e3          # Hz — PLACEHOLDER (currently same as f_RF; adjust as nee
 
 max_time = 2e5
 times = np.linspace(0, max_time, 1000)
-V_endcap = np.zeros_like(times)
-V_endcap[times < 3e5] = 500
-V_ring_L = -200 * np.ones_like(times)
-t_L_start = 2.6e4
-T_switch = 5e4
-V_ring_L[times > t_L_start] = -200 * np.cos(2 * np.pi / T_switch * (times[times > t_L_start] - t_L_start))
-V_ring_L[times > t_L_start + T_switch / 2] = 0
-V_ring_R = -500 * np.ones_like(times)
-t_R_start = 4e4
-V_ring_R[times > t_R_start] = -500 * np.cos(2 * np.pi / T_switch * (times[times > t_R_start] - t_R_start))
-V_ring_R[times > t_R_start + T_switch/4] = 0
 
 # ── RF amplitude envelope ─────────────────────────────────────────────────────
 # V_RF sets the zero-to-peak amplitude of the quadrupole RF at each time point.
@@ -76,33 +73,30 @@ V_RF = 100 * np.ones_like(times)   # constant amplitude (edit to modulate)
 # V_RF[mod_inds] *= 0.75 + 0.25 * np.cos(2 * np.pi / T_mod * (times[mod_inds] - t_L_start))
 
 # ── Right end cap ─────────────────────────────────────────────────────────────
-V_endcap_R = np.copy(V_endcap)   # right end cap DC voltage vs time
-t_ec_R_start = 1e5
-V_endcap_R[times < t_ec_R_start] *= -1
 
 V_endcap_R = 100 * np.ones(len(times))
 V_endcap = np.zeros(len(times))
-V_ring_L = 50 * np.ones(len(times))
-V_ring_R = -200 * np.ones(len(times))
+V_ring_L = 0 * 50 * np.ones(len(times))
+V_ring_R = 0 * -100 * np.ones(len(times))
 
 # ── Braking ring electrode ─────────────────────────────────────────────────────
 # V_ring_brake (electrode 13): independently controllable DC ring electrode.
-V_ring_brake = 300 * np.ones_like(times)   # edit to apply braking pulse
+V_ring_brake = 0 * np.ones_like(times)   # edit to apply braking pulse
 
 # ── Perpendicular trap RF amplitude ───────────────────────────────────────────
 # PLACEHOLDER: Set V_RF2 to the zero-to-peak RF voltage needed to trap a particle
 # in the perpendicular trap.  Currently 0 V (rods are inactive).
-V_RF2 = 150 * np.ones_like(times)   # PLACEHOLDER — set to trapping amplitude
+V_RF2 = 1000 * np.ones_like(times)   # PLACEHOLDER — set to trapping amplitude
 
 # Common-mode DC bias: +V_DC2 applied to both rod pairs, leaving the RF quadrupole
 # field unchanged.  Raises the mean rod potential to decelerate incoming particles.
-V_DC2 = 70 * np.ones_like(times)
+V_DC2 = 0 * -40 * np.ones_like(times)
 
 # ── Perpendicular trap DC voltages ────────────────────────────────────────────
 # PLACEHOLDER: Set axial confinement voltages for the perpendicular trap.
 # V_trap_lens (electrode 11) and V_coll_lens (electrode 12) act as end caps.
-V_trap_lens = 50 * np.ones_like(times)
-V_coll_lens = 80 * np.ones_like(times)
+V_trap_lens = 100 * np.ones_like(times)
+V_coll_lens = 100 * np.ones_like(times)
 
 SCHEDULE = list(np.vstack((
     times,
@@ -126,6 +120,8 @@ print(f"Written {len(SCHEDULE)} rows → {out_path}")
 
 # ── Quick preview plot ─────────────────────────────────────────────────────────
 try:
+    if _args.no_preview:
+        raise ImportError  # skip cleanly
     import matplotlib.pyplot as plt
 
     t    = np.array([r[0] for r in SCHEDULE])
