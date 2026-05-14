@@ -19,6 +19,7 @@ Usage
 import argparse
 import os
 import re
+import struct
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -27,26 +28,97 @@ import matplotlib.animation as animation
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-# ── Geometry (Fusion world coordinates, mm) ───────────────────────────────────
-# PLACEHOLDER: update every Z span / Y band after the new Fusion geometry is
-# fixed.  Particles travel from the loading Paul trap (set 1, +z side) toward
-# the optical Paul trap (set 3, -z side) along the RF guide (set 2).
-GEO = dict(
-    rod_z_set1            = (   0.0,  100.0),  # PLACEHOLDER: set 1 (loading PT) Z extent
-    rod_z_set2            = (-200.0,    0.0),  # PLACEHOLDER: set 2 (RF guide) Z extent
-    rod_z_set3            = (-400.0, -250.0),  # PLACEHOLDER: set 3 (optical PT) Z extent
-    rod_y_top             = ( 19.66,  22.66),  # PLACEHOLDER: top-rod Y band (sets 1+2)
-    rod_y_bot             = ( 15.47,  18.47),  # PLACEHOLDER: bottom-rod Y band (sets 1+2)
-    rod_y_top_3           = ( 25.0,   29.0),   # PLACEHOLDER: top-rod Y band (set 3, wider)
-    rod_y_bot_3           = (  9.0,   13.0),   # PLACEHOLDER: bottom-rod Y band (set 3, wider)
-    gap_z                 = (-110.0, -100.0),  # PLACEHOLDER: gate-valve gap
-    endcap_load_U_z       =  110.0,            # PLACEHOLDER
-    endcap_load_D_z       =  -10.0,            # PLACEHOLDER
-    endcap_optical_U_z    = -250.0,            # PLACEHOLDER
-    endcap_optical_D_z    = -400.0,            # PLACEHOLDER
-    view_z                = (-450.0, 150.0),   # PLACEHOLDER Z axis limits
-    view_y                = (   5.0,  32.0),   # PLACEHOLDER Y axis limits
-)
+# ── Geometry derived from STL files ───────────────────────────────────────────
+# All Z spans, Y bands, endcap centres, and view limits are computed at startup
+# from the bounding boxes of the STL files in this directory.  Missing files
+# are silently skipped — their corresponding GEO entries become None and the
+# affected geometry element is just not drawn.
+
+def _read_stl_bbox(path):
+    """Bounding box of a binary STL.  Returns ((xmin,xmax),(ymin,ymax),(zmin,zmax))
+    or None if the file is absent."""
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        f.read(80)
+        (n,) = struct.unpack("<I", f.read(4))
+        raw = f.read(n * 50)
+    if n == 0 or len(raw) < n * 50:
+        return None
+    # Each triangle: 12 bytes normal + 36 bytes (3 vertices × 3 float32) + 2 bytes attr
+    arr   = np.frombuffer(raw, dtype=np.uint8).reshape(n, 50)
+    verts = np.frombuffer(arr[:, 12:48].tobytes(), dtype="<f4").reshape(-1, 3)
+    return ((float(verts[:, 0].min()), float(verts[:, 0].max())),
+            (float(verts[:, 1].min()), float(verts[:, 1].max())),
+            (float(verts[:, 2].min()), float(verts[:, 2].max())))
+
+
+def _bbox_union(*boxes):
+    boxes = [b for b in boxes if b is not None]
+    if not boxes:
+        return None
+    return ((min(b[0][0] for b in boxes), max(b[0][1] for b in boxes)),
+            (min(b[1][0] for b in boxes), max(b[1][1] for b in boxes)),
+            (min(b[2][0] for b in boxes), max(b[2][1] for b in boxes)))
+
+
+def compute_geo(base=BASE):
+    bb   = lambda name: _read_stl_bbox(os.path.join(base, name))
+    cz   = lambda b: None if b is None else 0.5 * (b[2][0] + b[2][1])
+    zsp  = lambda b: None if b is None else b[2]
+    ysp  = lambda b: None if b is None else b[1]
+
+    set1 = _bbox_union(*[bb(f"rod_1_{s}.stl") for s in ("TL", "TR", "BL", "BR")])
+    set2 = _bbox_union(*[bb(f"rod_2_{s}.stl") for s in ("TL", "TR", "BL", "BR")])
+    set3 = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("TL", "TR", "BL", "BR")])
+
+    rod12_top = _bbox_union(*[bb(f"rod_{i}_{s}.stl") for i in (1, 2) for s in ("TL", "TR")])
+    rod12_bot = _bbox_union(*[bb(f"rod_{i}_{s}.stl") for i in (1, 2) for s in ("BL", "BR")])
+    rod3_top  = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("TL", "TR")])
+    rod3_bot  = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("BL", "BR")])
+
+    ec_loadU = bb("endcap_load_U.stl")
+    ec_loadD = bb("endcap_load_D.stl")
+    ec_optU  = bb("endcap_optical_U.stl")
+    ec_optD  = bb("endcap_optical_D.stl")
+
+    # Gate-valve gap: the empty Z interval between set 1 and set 2 (whichever
+    # ordering is correct in the new geometry).
+    gap_z = None
+    if set1 and set2:
+        z1_lo, z1_hi = set1[2]
+        z2_lo, z2_hi = set2[2]
+        if z1_hi < z2_lo:
+            gap_z = (z1_hi, z2_lo)
+        elif z2_hi < z1_lo:
+            gap_z = (z2_hi, z1_lo)
+
+    # View bounds: union of every loaded body, with small padding.
+    all_bb = _bbox_union(set1, set2, set3, ec_loadU, ec_loadD, ec_optU, ec_optD)
+    view_z = view_y = None
+    if all_bb:
+        view_z = (all_bb[2][0] - 10.0, all_bb[2][1] + 10.0)
+        view_y = (all_bb[1][0] -  2.0, all_bb[1][1] +  2.0)
+
+    return dict(
+        rod_z_set1         = zsp(set1),
+        rod_z_set2         = zsp(set2),
+        rod_z_set3         = zsp(set3),
+        rod_y_top          = ysp(rod12_top),
+        rod_y_bot          = ysp(rod12_bot),
+        rod_y_top_3        = ysp(rod3_top),
+        rod_y_bot_3        = ysp(rod3_bot),
+        gap_z              = gap_z,
+        endcap_load_U_z    = cz(ec_loadU),
+        endcap_load_D_z    = cz(ec_loadD),
+        endcap_optical_U_z = cz(ec_optU),
+        endcap_optical_D_z = cz(ec_optD),
+        view_z             = view_z,
+        view_y             = view_y,
+    )
+
+
+GEO = compute_geo()
 
 # ── I/O ───────────────────────────────────────────────────────────────────────
 
@@ -151,32 +223,47 @@ def draw_geometry(ax, triggers=(), trig_colors=()):
     g = GEO
     rod_kw = dict(facecolor=(0.6, 0.6, 0.6), edgecolor="none", alpha=0.30, zorder=1)
 
-    # Sets 1 + 2 share the same (narrower) rod spacing
-    for z0, z1 in [g["rod_z_set1"], g["rod_z_set2"]]:
-        for y0, y1 in [g["rod_y_top"], g["rod_y_bot"]]:
+    # Sets 1 + 2 share the same (narrower) rod spacing.
+    for zspan, ysp in [
+        (g["rod_z_set1"], g["rod_y_top"]),
+        (g["rod_z_set1"], g["rod_y_bot"]),
+        (g["rod_z_set2"], g["rod_y_top"]),
+        (g["rod_z_set2"], g["rod_y_bot"]),
+    ]:
+        if zspan is None or ysp is None:
+            continue
+        z0, z1 = zspan
+        y0, y1 = ysp
+        ax.add_patch(mpatches.Rectangle((z0, y0), z1 - z0, y1 - y0, **rod_kw))
+
+    # Set 3 (optical Paul trap) uses wider rod spacing.
+    if g["rod_z_set3"] is not None:
+        z0, z1 = g["rod_z_set3"]
+        for ysp in (g["rod_y_top_3"], g["rod_y_bot_3"]):
+            if ysp is None:
+                continue
+            y0, y1 = ysp
             ax.add_patch(mpatches.Rectangle(
-                (z0, y0), z1 - z0, y1 - y0, **rod_kw))
+                (z0, y0), z1 - z0, y1 - y0,
+                facecolor=(0.55, 0.45, 0.7), edgecolor="none", alpha=0.30, zorder=1))
 
-    # Set 3 (optical Paul trap) uses wider rod spacing
-    z0, z1 = g["rod_z_set3"]
-    for y0, y1 in [g["rod_y_top_3"], g["rod_y_bot_3"]]:
-        ax.add_patch(mpatches.Rectangle(
-            (z0, y0), z1 - z0, y1 - y0,
-            facecolor=(0.55, 0.45, 0.7), edgecolor="none", alpha=0.30, zorder=1))
+    # Gate-valve gap.
+    if g["gap_z"] is not None:
+        gz0, gz1 = g["gap_z"]
+        ax.axvspan(gz0, gz1, color="lightyellow", alpha=0.7, zorder=0, label="Gate valve gap")
 
-    # Gate-valve gap
-    gz0, gz1 = g["gap_z"]
-    ax.axvspan(gz0, gz1, color="lightyellow", alpha=0.7, zorder=0, label="Gate valve gap")
-
-    # Endcaps as vertical lines
-    ax.axvline(g["endcap_load_U_z"],    color="teal",     lw=1.5, ls="--",
-               alpha=0.75, label="Load endcap U (3)")
-    ax.axvline(g["endcap_load_D_z"],    color="teal",     lw=1.5, ls="-.",
-               alpha=0.75, label="Load endcap D (4)")
-    ax.axvline(g["endcap_optical_U_z"], color="seagreen", lw=1.5, ls="--",
-               alpha=0.85, label="Optical endcap U (9)")
-    ax.axvline(g["endcap_optical_D_z"], color="seagreen", lw=1.5, ls="-.",
-               alpha=0.85, label="Optical endcap D (10)")
+    # Endcaps as vertical lines.
+    endcap_lines = [
+        ("endcap_load_U_z",    "teal",     "--", "Load endcap U (3)"),
+        ("endcap_load_D_z",    "teal",     "-.", "Load endcap D (4)"),
+        ("endcap_optical_U_z", "seagreen", "--", "Optical endcap U (9)"),
+        ("endcap_optical_D_z", "seagreen", "-.", "Optical endcap D (10)"),
+    ]
+    for key, color, ls, label in endcap_lines:
+        z = g[key]
+        if z is None:
+            continue
+        ax.axvline(z, color=color, lw=1.5, ls=ls, alpha=0.8, label=label)
 
     for i, trig in enumerate(triggers):
         c = trig_colors[i] if i < len(trig_colors) else "darkorchid"
@@ -184,8 +271,10 @@ def draw_geometry(ax, triggers=(), trig_colors=()):
         ax.axvline(trig["z_mm"], color=c, lw=1.5, ls=(0, (4, 2)), alpha=0.85,
                    label=f"Trigger {i+1}: Z={trig['z_mm']:.0f} mm → {{{elec_str}}}")
 
-    ax.set_xlim(g["view_z"])
-    ax.set_ylim(g["view_y"])
+    if g["view_z"] is not None:
+        ax.set_xlim(g["view_z"])
+    if g["view_y"] is not None:
+        ax.set_ylim(g["view_y"])
     ax.set_xlabel("Z (mm)")
     ax.set_ylabel("Y (mm)")
     ax.set_title("Side view  (Z = trap axis,  Y = height)")
