@@ -294,7 +294,9 @@ Parses the SIMION PA binary files and produces a two-panel figure: an X-Z cross-
 | Environment | Purpose |
 |-------------|---------|
 | `~/.venvs/nano` | Main simulation scripts (numpy, matplotlib, PyVista) |
-| `~/.venvs/mesh` | Mesh processing — trimesh, rtree (point-in-mesh for dielectric PA generation) |
+| `~/.venvs/mesh` | Mesh processing — `trimesh`, `rtree`, `embreex` (point-in-mesh for dielectric PA generation) |
+
+> **embreex is important.** Without it, `trimesh.contains()` falls back to a numpy/rtree path that builds an `(n_rays × n_triangles)` dense scratch matrix per call, which can use tens of GB for the lens holder at production resolution. With `embreex` installed, peak memory drops to essentially just the epsilon array itself. Install with `~/.venvs/mesh/bin/pip install embreex`.
 
 ---
 

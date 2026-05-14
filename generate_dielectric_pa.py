@@ -7,12 +7,21 @@ It is consumed by refine_with_dielectric.lua, which re-refines every electrode
 PA with it so that the dielectric volumes correctly modify the electric field.
 
 Grid conventions (must match paulTrap.gem):
-  Electric PA dimensions : NX=131, NY=91, NZ=855  (pa_define 65×45×427 mm, dx=0.5)
-  Dielectric PA dimensions: NX-1, NY-1, NZ-1 = 130×90×854
+  Electric PA dimensions  : NX, NY, NZ — auto-detected from paulTrap.pa0
+                            header, so a change to `dx` in paulTrap.gem
+                            takes effect after the next Refine.  If
+                            paulTrap.pa0 is missing the script falls back
+                            to hardcoded defaults with a warning.
+  Dielectric PA dimensions: NX-1, NY-1, NZ-1
   Cell (i,j,k) centre (Fusion mm) :
       x = (i + 0.5)*DX + FUSION_X_MIN
       y = (j + 0.5)*DX + FUSION_Y_MIN
       z = (k + 0.5)*DX + FUSION_Z_MIN
+
+Memory note: trimesh.contains() can allocate many GB internally for
+complex non-convex meshes (e.g. a lens holder with through-holes for the
+rods).  This script processes one Z-slice at a time so peak memory is
+bounded by nx_sub × ny_sub points regardless of mesh complexity.
 
 Binary format (same as SIMION charge-density / space-charge PA):
   56-byte header (identical fields to the electric PA header)
@@ -53,11 +62,33 @@ DIELECTRIC_STLS = [
     "lens_holder.stl",
 ]
 
-# PA grid — must match pa_define in paulTrap.gem
-NX, NY, NZ = 131, 91, 855    # electric PA grid points  (65 mm / 0.5 + 1)
-DX = 0.5                      # mm
+# PA grid — auto-detected from paulTrap.pa0 header below.  If paulTrap.pa0
+# is missing (no Refine has been run yet), these defaults are used and a
+# warning is printed.  After the first Refine, the script reads the actual
+# NX, NY, NZ, DX out of the PA header so the dielectric PA stays aligned
+# with whatever dx is currently set in paulTrap.gem.
+NX, NY, NZ = 131, 91, 855
+DX = 0.5
 
-# GEM → Fusion offset: Fusion = GEM_coord - (tx, ty, tz)
+PA_HEADER_PATH = os.path.join(BASE, "paulTrap.pa0")
+if os.path.exists(PA_HEADER_PATH):
+    with open(PA_HEADER_PATH, "rb") as _fh:
+        _hdr = _fh.read(56)
+    NX = struct.unpack_from("<i", _hdr, 16)[0]
+    NY = struct.unpack_from("<i", _hdr, 20)[0]
+    NZ = struct.unpack_from("<i", _hdr, 24)[0]
+    DX = struct.unpack_from("<d", _hdr, 32)[0]
+    print(f"Detected electric PA grid from paulTrap.pa0: "
+          f"NX={NX}, NY={NY}, NZ={NZ}, dx={DX:.4g} mm")
+else:
+    print(f"  WARNING: {PA_HEADER_PATH} not found.  Falling back to "
+          f"hardcoded NX={NX}, NY={NY}, NZ={NZ}, DX={DX} mm — these MUST "
+          f"match pa_define in paulTrap.gem or the dielectric PA will not "
+          f"align with the electric PAs.")
+
+# GEM → Fusion offset: Fusion = GEM_coord - (tx, ty, tz).
+# Must match the locate(tx, ty, tz) block in paulTrap.gem.  (Not stored in
+# the PA header, so still set manually here.)
 TX, TY, TZ = 25, 8, 132
 
 # Fusion-world origin of GEM index (0,0,0)
@@ -113,31 +144,40 @@ for stl_name in DIELECTRIC_STLS:
     iz_lo = max(0, int(np.floor((bb_lo[2] - FUSION_Z_MIN) / DX - 1)))
     iz_hi = min(NZ_D, int(np.ceil( (bb_hi[2] - FUSION_Z_MIN) / DX + 1)))
 
+    nx_sub = ix_hi - ix_lo
+    ny_sub = iy_hi - iy_lo
+    nz_sub = iz_hi - iz_lo
     print(f"    Candidate cell range: ix [{ix_lo},{ix_hi}]  "
-          f"iy [{iy_lo},{iy_hi}]  iz [{iz_lo},{iz_hi}]")
+          f"iy [{iy_lo},{iy_hi}]  iz [{iz_lo},{iz_hi}]  "
+          f"({nx_sub * ny_sub * nz_sub:,} cells)")
 
-    # Build all candidate cell-centre positions as an (N,3) array
+    # Process one Z-slice at a time.  trimesh.contains() on millions of points
+    # in one call allocates several × the input size internally; per-slice
+    # keeps peak memory bounded by nx_sub * ny_sub points (~10s of MB max
+    # even on a fine grid).  The mesh's ray intersector is cached after the
+    # first call so per-call overhead is small.
     xi = x_c[ix_lo:ix_hi]
     yi = y_c[iy_lo:iy_hi]
     zi = z_c[iz_lo:iz_hi]
-    XX, YY, ZZ = np.meshgrid(xi, yi, zi, indexing='ij')   # (nx_sub, ny_sub, nz_sub)
-    pts = np.column_stack([XX.ravel(), YY.ravel(), ZZ.ravel()])
+    XX_2d, YY_2d = np.meshgrid(xi, yi, indexing='ij')      # (nx_sub, ny_sub)
+    xy_flat = np.column_stack([XX_2d.ravel(), YY_2d.ravel()])
 
-    # Point-in-mesh test (ray casting via trimesh)
-    inside = mesh.contains(pts)                            # bool (N,)
-    inside_3d = inside.reshape(
-        len(xi), len(yi), len(zi))                         # [ix_sub, iy_sub, iz_sub]
+    pts = np.empty((nx_sub * ny_sub, 3), dtype=np.float64)
+    pts[:, 0:2] = xy_flat
+    n_inside = 0
+    for diz, z_val in enumerate(zi):
+        pts[:, 2] = z_val
+        inside_flat = mesh.contains(pts)                   # bool (nx_sub*ny_sub,)
+        if not inside_flat.any():
+            continue
+        inside_2d = inside_flat.reshape(nx_sub, ny_sub)
+        ix_hits, iy_hits = np.where(inside_2d)
+        epsilon[iz_lo + diz,
+                iy_lo + iy_hits,
+                ix_lo + ix_hits] = EPSILON_GLASS
+        n_inside += int(inside_flat.sum())
 
-    # Write into epsilon array (stored as [iz, iy, ix])
-    n_inside = inside.sum()
     print(f"    Cells inside mesh: {n_inside}")
-    for dix in range(len(xi)):
-        for diy in range(len(yi)):
-            for diz in range(len(zi)):
-                if inside_3d[dix, diy, diz]:
-                    epsilon[iz_lo + diz,
-                            iy_lo + diy,
-                            ix_lo + dix] = EPSILON_GLASS
 
 
 # ── Write dielectric PA binary file ──────────────────────────────────────────
@@ -147,8 +187,11 @@ n_diel = int((epsilon > 1.0).sum())
 print(f"\nDielectric cells: {n_diel}  ({100*n_diel/n_pts:.3f}% of array)")
 print(f"Writing {OUT_PA} ...")
 
-# Flatten to 1-D in SIMION storage order: z outermost, x innermost → C order
-flat = epsilon.flatten(order='C')   # [iz, iy, ix] C-order → z slowest, x fastest ✓
+# SIMION storage order is z outermost / x innermost, which is exactly the
+# C-order of our [iz, iy, ix] array — no flatten or copy needed.  We require
+# native little-endian float64 (which is what numpy uses on every platform
+# this is likely to run on, but assert just in case).
+assert epsilon.dtype == np.float64 and epsilon.flags["C_CONTIGUOUS"]
 
 with open(OUT_PA, 'wb') as f:
     # Header (56 bytes)
@@ -162,8 +205,9 @@ with open(OUT_PA, 'wb') as f:
     f.write(struct.pack('<d', DX))           # [32:40] dx mm
     f.write(struct.pack('<d', DX))           # [40:48] dy mm
     f.write(struct.pack('<d', DX))           # [48:56] dz mm
-    # Data
-    f.write(flat.astype('<f8').tobytes())
+    # Data — write the array's buffer directly to avoid the 2× memory cost
+    # of materialising a full bytes copy.
+    epsilon.tofile(f)
 
 expected_size = 56 + n_pts * 8
 actual_size   = os.path.getsize(OUT_PA)
