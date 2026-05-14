@@ -1,34 +1,37 @@
 """
-generate_voltages.py  –  Define DC electrode pulse sequences for the Paul trap.
+generate_voltages.py  –  Define voltage schedules for the Paul trap simulation.
 
-Edit the SCHEDULE list below, then run:
+Edit the SCHEDULE block below, then run:
     python generate_voltages.py
 
-Output: voltages_<OUT_NUMBER>.csv  (loaded by SIMION when voltage_file_enable=1).
+Output: voltages_<OUT_NUMBER>.csv  (loaded by SIMION at run start).
 Set voltage_file_number in SIMION to match OUT_NUMBER.
 
 Format: one row per time point; voltages are linearly interpolated between rows.
 For a sharp step, add two rows at the same time (or 0.1 µs apart).
 
-Electrodes controlled here (main Paul trap, axis along Z):
-    V_endcap     –  electrode 3   (left end cap)
-    V_endcap_R   –  electrode 8   (right end cap)
-    V_ring_L     –  electrode 6   (ring near gap left edge)
-    V_ring_R     –  electrode 7   (ring near gap right edge)
-    V_ring_brake –  electrode 13  (braking ring)
+Electrode channels (10 SIMION electrodes total):
 
-Electrodes controlled here (perpendicular trap, axis along X):
-    V_DC2       –  electrodes 9, 10  (common-mode rod bias: +V_DC2 on both pairs;
-                    RF quadrupole field unchanged — raises mean rod potential
-                    to decelerate fast incoming particles)
-    V_trap_lens –  electrode 11  (trapping_lens_holder)
-    V_coll_lens –  electrode 12  (collection_lens_holder)
+    Sets 1 + 2 (loading Paul trap + RF guide rods, wired in parallel):
+        V_RF            –  electrodes 1 (+RF on TL/BR) and 2 (-RF on TR/BL)
+        f_RF            –  carrier frequency, written as metadata comment
 
-RF frequency and amplitude envelopes:
-    f_RF       –  main trap carrier frequency (Hz), written as metadata comment
-    V_RF       –  main trap zero-to-peak amplitude vs time
-    f_RF2      –  perpendicular trap carrier frequency (Hz) [PLACEHOLDER]
-    V_RF2      –  perpendicular trap zero-to-peak amplitude vs time [PLACEHOLDER]
+    Load Paul trap endcaps:
+        V_endcap_load_U –  electrode 3 (+z endcap)
+        V_endcap_load_D –  electrode 4 (-z endcap)
+
+    Set 3 (optical Paul trap, 4 fully-independent SIMION electrodes):
+        V_RF3           –  shared amplitude: applied as +V_RF3·cos(ω₃t) on
+                            rod_3_TL & rod_3_BR; -V_RF3·cos(ω₃t) on rod_3_TR & rod_3_BL
+        f_RF3           –  carrier frequency, written as metadata comment
+        V_dc_3_TL       –  electrode 5 DC trim (rod_3_TL)
+        V_dc_3_TR       –  electrode 6 DC trim (rod_3_TR)
+        V_dc_3_BL       –  electrode 7 DC trim (rod_3_BL)
+        V_dc_3_BR       –  electrode 8 DC trim (rod_3_BR)
+
+    Optical Paul trap endcaps (gated by trigger; see trap_config.lua):
+        V_endcap_optical_U –  electrode 9  (+z endcap)
+        V_endcap_optical_D –  electrode 10 (-z endcap)
 """
 
 import argparse
@@ -46,117 +49,114 @@ _args = ap.parse_args()
 OUT_NUMBER = _args.out
 
 # ── RF parameters ─────────────────────────────────────────────────────────────
-f_RF  = 6e3          # Hz — carrier frequency of the main Paul trap (axis along Z)
+f_RF  = 5.5e3          # Hz — carrier frequency, sets 1 + 2 (loading + RF guide)
 
-# PLACEHOLDER: Set f_RF2 to the correct RF frequency for the perpendicular trap
-# (axis along X).  Stability parameter q ≈ 4eV₀/(m ω² r₀²) — use the known r₀
-# and target q < 0.908.
-f_RF2 = 3.4e3 # 1.1e3          # Hz — PLACEHOLDER (currently same as f_RF; adjust as needed)
+# PLACEHOLDER: Set f_RF3 to the correct RF frequency for the optical Paul trap (set 3).
+# Stability parameter q ≈ 4 Q V_rf / (m ω² r_0²) — choose with the known r_0 and a
+# target q < 0.908.
+f_RF3 = 1e6            # Hz — PLACEHOLDER
 
-# ── Pulse sequence ────────────────────────────────────────────────────────────
-# Each row: (time_us, V_endcap, V_ring_L, V_ring_R)
-# The simulation starts at t=0; extend the last row to cover your full run time.
-
+# ── Time base ─────────────────────────────────────────────────────────────────
 max_time = 2e5
-times = np.linspace(0, max_time, 1000)
+times    = np.linspace(0, max_time, 1000)
 
-# ── RF amplitude envelope ─────────────────────────────────────────────────────
-# V_RF sets the zero-to-peak amplitude of the quadrupole RF at each time point.
-# Linearly interpolated by SIMION between rows — same time axis as the DC voltages.
-# Example: adiabatic ramp-down starting at t = 1e5 µs
+# ── Sets 1 + 2 RF amplitude envelope ──────────────────────────────────────────
+# V_RF sets the zero-to-peak amplitude of the loading + RF guide quadrupole.
+# SIMION interpolates linearly between rows.  Example adiabatic ramp-down:
 #   V_RF = 100 * np.ones_like(times)
 #   ramp_mask = times > 1e5
 #   V_RF[ramp_mask] = 100 * np.exp(-(times[ramp_mask] - 1e5) / 3e4)
-V_RF = 100 * np.ones_like(times)   # constant amplitude (edit to modulate)
-# T_mod = 3e4
-# mod_inds = (times > t_L_start) & (times <= t_L_start + T_mod)
-# V_RF[mod_inds] *= 0.75 + 0.25 * np.cos(2 * np.pi / T_mod * (times[mod_inds] - t_L_start))
+V_RF = 100 * np.ones_like(times)
 
-# ── Right end cap ─────────────────────────────────────────────────────────────
+# ── Load Paul trap endcaps ────────────────────────────────────────────────────
+V_endcap_load_U = np.zeros_like(times)
+V_endcap_load_D = np.zeros_like(times)
 
-V_endcap_R = 100 * np.ones(len(times))
-V_endcap = np.zeros(len(times))
-V_ring_L = 0 * 50 * np.ones(len(times))
-V_ring_R = 0 * -100 * np.ones(len(times))
+# ── Set 3 (optical Paul trap) ─────────────────────────────────────────────────
+# PLACEHOLDER: set V_RF3 to the trapping amplitude for the wider Paul trap.
+V_RF3 = 0 * np.ones_like(times)
 
-# ── Braking ring electrode ─────────────────────────────────────────────────────
-# V_ring_brake (electrode 13): independently controllable DC ring electrode.
-V_ring_brake = 0 * np.ones_like(times)   # edit to apply braking pulse
+# Per-rod DC trims (positive shifts equilibrium away from that rod).
+# Apply equal-and-opposite trims on opposite-side rods to shift equilibrium
+# laterally; common-mode trims raise the mean rod potential.
+V_dc_3_TL = np.zeros_like(times)
+V_dc_3_TR = np.zeros_like(times)
+V_dc_3_BL = np.zeros_like(times)
+V_dc_3_BR = np.zeros_like(times)
 
-# ── Perpendicular trap RF amplitude ───────────────────────────────────────────
-# PLACEHOLDER: Set V_RF2 to the zero-to-peak RF voltage needed to trap a particle
-# in the perpendicular trap.  Currently 0 V (rods are inactive).
-V_RF2 = 1000 * np.ones_like(times)   # PLACEHOLDER — set to trapping amplitude
+# ── Optical Paul trap endcaps (gated by trigger in trap_config.lua) ───────────
+# These follow the schedule from t = 0 of the trigger firing, not absolute t.
+V_endcap_optical_U = np.zeros_like(times)
+V_endcap_optical_D = np.zeros_like(times)
 
-# Common-mode DC bias: +V_DC2 applied to both rod pairs, leaving the RF quadrupole
-# field unchanged.  Raises the mean rod potential to decelerate incoming particles.
-V_DC2 = 0 * -40 * np.ones_like(times)
-
-# ── Perpendicular trap DC voltages ────────────────────────────────────────────
-# PLACEHOLDER: Set axial confinement voltages for the perpendicular trap.
-# V_trap_lens (electrode 11) and V_coll_lens (electrode 12) act as end caps.
-V_trap_lens = 100 * np.ones_like(times)
-V_coll_lens = 100 * np.ones_like(times)
-
-SCHEDULE = list(np.vstack((
-    times,
-    V_endcap, V_endcap_R, V_ring_L, V_ring_R, V_ring_brake, V_RF,
-    V_RF2, V_DC2, V_trap_lens, V_coll_lens,
-)).T)
+# ── Assemble schedule ─────────────────────────────────────────────────────────
+COLUMNS = [
+    ("time_us",            times),
+    ("V_RF",               V_RF),
+    ("V_RF3",              V_RF3),
+    ("V_endcap_load_U",    V_endcap_load_U),
+    ("V_endcap_load_D",    V_endcap_load_D),
+    ("V_dc_3_TL",          V_dc_3_TL),
+    ("V_dc_3_TR",          V_dc_3_TR),
+    ("V_dc_3_BL",          V_dc_3_BL),
+    ("V_dc_3_BR",          V_dc_3_BR),
+    ("V_endcap_optical_U", V_endcap_optical_U),
+    ("V_endcap_optical_D", V_endcap_optical_D),
+]
 
 # ── Write CSV ─────────────────────────────────────────────────────────────────
 out_path = os.path.join(BASE, f"voltages_{OUT_NUMBER}.csv")
+header   = ",".join(name for name, _ in COLUMNS)
+data     = np.vstack([arr for _, arr in COLUMNS]).T
+
 with open(out_path, "w") as f:
     f.write(f"# f_RF_Hz={f_RF}\n")
-    f.write(f"# f_RF2_Hz={f_RF2}\n")
-    f.write("time_us,V_endcap,V_endcap_R,V_ring_L,V_ring_R,V_ring_brake,V_RF,"
-            "V_RF2,V_DC2,V_trap_lens,V_coll_lens\n")
-    for row in SCHEDULE:
-        f.write(f"{row[0]:.2f},"
-                f"{row[1]:.6f},{row[2]:.6f},{row[3]:.6f},{row[4]:.6f},{row[5]:.6f},"
-                f"{row[6]:.6f},{row[7]:.6f},{row[8]:.6f},{row[9]:.6f},{row[10]:.6f}\n")
+    f.write(f"# f_RF3_Hz={f_RF3}\n")
+    f.write(header + "\n")
+    for row in data:
+        f.write(f"{row[0]:.2f}," + ",".join(f"{v:.6f}" for v in row[1:]) + "\n")
 
-print(f"Written {len(SCHEDULE)} rows → {out_path}")
+print(f"Written {len(data)} rows → {out_path}")
 
-# ── Quick preview plot ─────────────────────────────────────────────────────────
+# ── Preview plot ──────────────────────────────────────────────────────────────
 try:
     if _args.no_preview:
-        raise ImportError  # skip cleanly
+        raise ImportError
     import matplotlib.pyplot as plt
 
-    t    = np.array([r[0] for r in SCHEDULE])
-    v3   = np.array([r[1] for r in SCHEDULE])
-    v8   = np.array([r[2] for r in SCHEDULE])
-    v6   = np.array([r[3] for r in SCHEDULE])
-    v7   = np.array([r[4] for r in SCHEDULE])
-    v13  = np.array([r[5] for r in SCHEDULE])
-    vrf  = np.array([r[6] for r in SCHEDULE])
-    vrf2 = np.array([r[7] for r in SCHEDULE])
-    vdc2 = np.array([r[8] for r in SCHEDULE])
-    v11  = np.array([r[9] for r in SCHEDULE])
-    v12  = np.array([r[10] for r in SCHEDULE])
+    t = times
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 5), sharex=True)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
 
-    ax1.step(t, v3,   where="post", color="teal",      lw=1.5, label="End cap L (3)  [DC]")
-    ax1.step(t, v8,   where="post", color="teal",      lw=1.5, ls="--", label="End cap R (8)  [DC]")
-    ax1.step(t, v6,   where="post", color="goldenrod", lw=1.5, label="Ring L (6)  [DC]")
-    ax1.step(t, v7,   where="post", color="goldenrod", lw=1.5, ls="--", label="Ring R (7)  [DC]")
-    ax1.step(t, v13,  where="post", color="sienna",    lw=1.5, ls=(0,(4,1,1,1)), label="Ring brake (13)  [DC]")
-    ax1.step(t, vrf,  where="post", color="crimson",   lw=1.5, ls=":",  label=f"RF V₀  (f={f_RF:.0f} Hz)")
+    ax1.step(t, V_RF,            where="post", color="crimson",   lw=1.5,
+             label=f"V_RF (sets 1+2,  f={f_RF:.0f} Hz)")
+    ax1.step(t, V_endcap_load_U, where="post", color="teal",      lw=1.5,
+             label="V_endcap_load_U (3)")
+    ax1.step(t, V_endcap_load_D, where="post", color="teal",      lw=1.5, ls="--",
+             label="V_endcap_load_D (4)")
     ax1.set_ylabel("Voltage (V)")
-    ax1.set_title(f"Main trap (Z-axis) — voltages_{OUT_NUMBER}.csv")
+    ax1.set_title(f"Loading region (sets 1+2) — voltages_{OUT_NUMBER}.csv")
     ax1.legend(fontsize=8, ncol=3)
     ax1.grid(True, alpha=0.3)
 
-    ax2.step(t, v11,  where="post", color="steelblue",  lw=1.5, label="Trap lens holder (11)  [DC]")
-    ax2.step(t, v12,  where="post", color="steelblue",  lw=1.5, ls="--", label="Coll lens holder (12)  [DC]")
-    ax2.step(t, vdc2, where="post", color="mediumseagreen", lw=1.5, ls=(0,(4,1)), label="Rod DC bias V_DC2")
-    ax2.step(t, vrf2, where="post", color="darkorange", lw=1.5, ls=":",  label=f"RF2 V₀  (f={f_RF2:.0f} Hz)")
+    ax2.step(t, V_RF3,              where="post", color="darkorange", lw=1.5,
+             label=f"V_RF3 (set 3,  f={f_RF3:.0f} Hz)")
+    ax2.step(t, V_dc_3_TL,          where="post", color="steelblue",  lw=1.2,
+             label="V_dc_3_TL (5)")
+    ax2.step(t, V_dc_3_TR,          where="post", color="steelblue",  lw=1.2, ls="--",
+             label="V_dc_3_TR (6)")
+    ax2.step(t, V_dc_3_BL,          where="post", color="navy",       lw=1.2,
+             label="V_dc_3_BL (7)")
+    ax2.step(t, V_dc_3_BR,          where="post", color="navy",       lw=1.2, ls="--",
+             label="V_dc_3_BR (8)")
+    ax2.step(t, V_endcap_optical_U, where="post", color="seagreen",   lw=1.5,
+             label="V_endcap_optical_U (9)")
+    ax2.step(t, V_endcap_optical_D, where="post", color="seagreen",   lw=1.5, ls="--",
+             label="V_endcap_optical_D (10)")
     ax2.set_xlabel("Time (µs)")
     ax2.set_ylabel("Voltage (V)")
-    ax2.set_title("Perpendicular trap (X-axis)")
-    ax2.legend(fontsize=8, ncol=3)
+    ax2.set_title("Optical Paul trap (set 3 + optical endcaps)")
+    ax2.legend(fontsize=8, ncol=4)
     ax2.grid(True, alpha=0.3)
 
     fig.tight_layout()

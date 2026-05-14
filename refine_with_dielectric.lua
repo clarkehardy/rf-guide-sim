@@ -1,10 +1,11 @@
 -- refine_with_dielectric.lua
 --
--- Re-refines each electrode fast-adjust PA (pa1–pa12) with the dielectric
--- permittivity array so that the glass lenses correctly modify the field.
+-- Re-refines each electrode fast-adjust PA (pa1–pa10) with the dielectric
+-- permittivity array so that the lenses and lens holder correctly modify
+-- the field.
 --
 -- Run AFTER:
---   1. Normal GEM Refine in SIMION (creates pa0–pa12 without dielectrics).
+--   1. Normal GEM Refine in SIMION (creates pa0–pa10 without dielectrics).
 --   2. generate_dielectric_pa.py (creates paulTrap-dielectric.pa).
 --
 -- Run this script from within SIMION via:
@@ -17,7 +18,7 @@
 
 local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\"
 
-local N_ELECTRODES = 13   -- electrodes 1–13 (glass lenses 14/15 are not in the electric PA)
+local N_ELECTRODES = 10   -- electrodes 1–10 (dielectrics are not in the electric PA)
 local CONVERGENCE  = 1e-7 -- refine convergence criterion
 
 -- ── Open the dielectric permittivity array ────────────────────────────────────

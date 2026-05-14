@@ -1,5 +1,5 @@
 -- paulTrap.lua
--- User program for linear Paul trap RF guide + perpendicular retrapping trap.
+-- User program for linear Paul trap RF guide + parallel-axis optical Paul trap.
 -- Physics: RF trapping (fast adjust), Epstein drag (free molecular), gravity.
 -- Gas, particle, drag, and trigger parameters are loaded from trap_config.lua.
 
@@ -17,10 +17,10 @@ local amu = 1.66054e-27   -- kg per amu
 local g_simion = 9.81e-9  -- mm/µs²
 
 -- ── RF defaults (overridden by voltages file metadata at run start) ───────────
-local _rf_omega     = 2 * math.pi * 4900 * 1e-6  -- rad/µs  (fallback: 4900 Hz)
-local _V0_default   = 100.0                        -- V, fallback amplitude main trap
-local _rf_omega_2   = 2 * math.pi * 4900 * 1e-6  -- rad/µs  (fallback perp trap)
-local _V0_2_default = 0.0                          -- V, fallback amplitude perp trap
+local _rf_omega     = 2 * math.pi * 4900 * 1e-6  -- rad/µs  (fallback: main RF 4900 Hz)
+local _V0_default   = 100.0                        -- V, fallback amplitude sets 1+2
+local _rf_omega_3   = 2 * math.pi * 4900 * 1e-6  -- rad/µs  (fallback: optical Paul trap RF)
+local _V0_3_default = 0.0                          -- V, fallback amplitude set 3
 
 -- ── Run-identity adjustables (flip in the SIMION Variables panel each run) ───
 -- Everything else lives in trap_config.lua.
@@ -46,8 +46,17 @@ local _particle_count     = 1          -- max ions to simulate; extras are splat
 local _ion_traj_step      = {}         -- [ion_number] = per-ion accel_adjust call counter
 
 -- ── Voltage schedule tables (populated from CSV in initialize_run()) ──────────
-local _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
-local _v11, _v12, _v13, _v_rf2, _v_dc2 = {}, {}, {}, {}, {}
+local _vt          = {}
+local _v_rf        = {}   -- sets 1+2 RF amplitude envelope
+local _v_rf3       = {}   -- set 3 RF amplitude envelope
+local _v_ec_load_U = {}   -- electrode 3
+local _v_ec_load_D = {}   -- electrode 4
+local _v_dc_TL     = {}   -- electrode 5 DC trim (rod_3_TL)
+local _v_dc_TR     = {}   -- electrode 6 DC trim (rod_3_TR)
+local _v_dc_BL     = {}   -- electrode 7 DC trim (rod_3_BL)
+local _v_dc_BR     = {}   -- electrode 8 DC trim (rod_3_BR)
+local _v_ec_opt_U  = {}   -- electrode 9
+local _v_ec_opt_D  = {}   -- electrode 10
 
 local function _interp(t_tbl, v_tbl, t)
   if #t_tbl == 0 then return 0.0 end
@@ -158,8 +167,17 @@ function segment.initialize_run()
     _particle_count, _particle_charge, _particle_mass_amu, #_particle_starts))
 
   -- ── Clear and reload voltage schedule ───────────────────────────────────
-  _vt, _v3, _v6, _v7, _v8, _v_rf = {}, {}, {}, {}, {}, {}
-  _v11, _v12, _v13, _v_rf2, _v_dc2 = {}, {}, {}, {}, {}
+  _vt          = {}
+  _v_rf        = {}
+  _v_rf3       = {}
+  _v_ec_load_U = {}
+  _v_ec_load_D = {}
+  _v_dc_TL     = {}
+  _v_dc_TR     = {}
+  _v_dc_BL     = {}
+  _v_dc_BR     = {}
+  _v_ec_opt_U  = {}
+  _v_ec_opt_D  = {}
 
   do
     local vpath = D .. "voltages_" .. math.floor(voltage_file_number) .. ".csv"
@@ -173,10 +191,10 @@ function segment.initialize_run()
           _rf_omega = 2 * math.pi * tonumber(freq) * 1e-6
           simion.print("RF:   f = " .. freq .. " Hz\n")
         end
-        local freq2 = line:match("f_RF2_Hz=([%d%.eE%+%-]+)")
-        if freq2 then
-          _rf_omega_2 = 2 * math.pi * tonumber(freq2) * 1e-6
-          simion.print("RF2:  f = " .. freq2 .. " Hz\n")
+        local freq3 = line:match("f_RF3_Hz=([%d%.eE%+%-]+)")
+        if freq3 then
+          _rf_omega_3 = 2 * math.pi * tonumber(freq3) * 1e-6
+          simion.print("RF3:  f = " .. freq3 .. " Hz\n")
         end
         line = vf:read("*l")
       end
@@ -192,16 +210,16 @@ function segment.initialize_run()
       end
 
       local dest = {
-        ["V_endcap"]     = _v3,
-        ["V_endcap_R"]   = _v8,
-        ["V_ring_L"]     = _v6,
-        ["V_ring_R"]     = _v7,
-        ["V_ring_brake"] = _v13,
-        ["V_RF"]         = _v_rf,
-        ["V_RF2"]        = _v_rf2,
-        ["V_DC2"]        = _v_dc2,
-        ["V_trap_lens"]  = _v11,
-        ["V_coll_lens"]  = _v12,
+        ["V_RF"]               = _v_rf,
+        ["V_RF3"]              = _v_rf3,
+        ["V_endcap_load_U"]    = _v_ec_load_U,
+        ["V_endcap_load_D"]    = _v_ec_load_D,
+        ["V_dc_3_TL"]          = _v_dc_TL,
+        ["V_dc_3_TR"]          = _v_dc_TR,
+        ["V_dc_3_BL"]          = _v_dc_BL,
+        ["V_dc_3_BR"]          = _v_dc_BR,
+        ["V_endcap_optical_U"] = _v_ec_opt_U,
+        ["V_endcap_optical_D"] = _v_ec_opt_D,
       }
 
       for line in vf:lines() do
@@ -230,16 +248,16 @@ function segment.initialize_run()
             name .. ":", #tbl, tbl[1], tbl[#tbl]))
         end
       end
-      _ch("V_endcap",     _v3)
-      _ch("V_endcap_R",   _v8)
-      _ch("V_ring_L",     _v6)
-      _ch("V_ring_R",     _v7)
-      _ch("V_ring_brake", _v13)
-      _ch("V_RF",         _v_rf)
-      _ch("V_RF2",        _v_rf2)
-      _ch("V_DC2",        _v_dc2)
-      _ch("V_trap_lens",  _v11)
-      _ch("V_coll_lens",  _v12)
+      _ch("V_RF",               _v_rf)
+      _ch("V_RF3",              _v_rf3)
+      _ch("V_endcap_load_U",    _v_ec_load_U)
+      _ch("V_endcap_load_D",    _v_ec_load_D)
+      _ch("V_dc_3_TL",          _v_dc_TL)
+      _ch("V_dc_3_TR",          _v_dc_TR)
+      _ch("V_dc_3_BL",          _v_dc_BL)
+      _ch("V_dc_3_BR",          _v_dc_BR)
+      _ch("V_endcap_optical_U", _v_ec_opt_U)
+      _ch("V_endcap_optical_D", _v_ec_opt_D)
     else
       simion.print("WARNING: voltage file not found: " .. vpath .. "\n")
     end
@@ -310,45 +328,40 @@ end
 function segment.fast_adjust()
   local t = ion_time_of_flight
 
-  -- Main trap RF (electrodes 1, 2, 4, 5) — never triggered, always uses absolute TOF
+  -- Sets 1+2 RF (electrodes 1, 2) — always on, absolute TOF
   local amp  = #_v_rf > 0 and _interp(_vt, _v_rf, t) or _V0_default
   local V_RF = amp * math.cos(_rf_omega * t)
-  adj_elect[1] =  V_RF   -- rod pair 1, left   (+RF phase)
-  adj_elect[2] = -V_RF   -- rod pair 2, left   (-RF phase)
-  adj_elect[4] =  V_RF   -- rod pair 1, right  (+RF phase)
-  adj_elect[5] = -V_RF   -- rod pair 2, right  (-RF phase)
+  adj_elect[1] =  V_RF   -- sets 1+2: TL + BR rods (+RF phase)
+  adj_elect[2] = -V_RF   -- sets 1+2: TR + BL rods (-RF phase)
 
-  -- Main trap DC (electrodes 3, 6, 7, 8).
-  -- For triggered electrodes: 0 V until fired, then schedule runs from t=0 of that schedule.
-  local t3 = _trig_t(3, t); if t3 then if #_v3 > 0 then adj_elect[3]  = _interp(_vt, _v3,  t3) end else adj_elect[3]  = 0 end
-  local t6 = _trig_t(6, t); if t6 then if #_v6 > 0 then adj_elect[6]  = _interp(_vt, _v6,  t6) end else adj_elect[6]  = 0 end
-  local t7 = _trig_t(7, t); if t7 then if #_v7 > 0 then adj_elect[7]  = _interp(_vt, _v7,  t7) end else adj_elect[7]  = 0 end
-  local t8 = _trig_t(8, t); if t8 then if #_v8 > 0 then adj_elect[8]  = _interp(_vt, _v8,  t8) end else adj_elect[8]  = 0 end
+  -- Load endcaps (electrodes 3, 4) — always on, follow schedule from t=0
+  adj_elect[3] = #_v_ec_load_U > 0 and _interp(_vt, _v_ec_load_U, t) or 0
+  adj_elect[4] = #_v_ec_load_D > 0 and _interp(_vt, _v_ec_load_D, t) or 0
 
-  -- Perpendicular trap RF + DC bias (electrodes 9, 10).
-  -- Amplitude envelope and DC bias use trigger-relative time so the trapping
-  -- pulse always starts from V(0) when the particle arrives.
-  -- The RF carrier uses absolute t to maintain phase continuity.
+  -- Set 3 (electrodes 5–8): shared V_RF3 with diagonal-pair phasing + per-rod DC trim.
+  -- Always on, absolute TOF for both carrier and envelope.
+  -- TL + BR get +RF phase; TR + BL get -RF phase.
+  local amp3  = #_v_rf3 > 0 and _interp(_vt, _v_rf3, t) or _V0_3_default
+  local V_RF3 = amp3 * math.cos(_rf_omega_3 * t)
+  local dcTL  = #_v_dc_TL > 0 and _interp(_vt, _v_dc_TL, t) or 0
+  local dcTR  = #_v_dc_TR > 0 and _interp(_vt, _v_dc_TR, t) or 0
+  local dcBL  = #_v_dc_BL > 0 and _interp(_vt, _v_dc_BL, t) or 0
+  local dcBR  = #_v_dc_BR > 0 and _interp(_vt, _v_dc_BR, t) or 0
+  adj_elect[5] =  V_RF3 + dcTL   -- rod_3_TL
+  adj_elect[6] = -V_RF3 + dcTR   -- rod_3_TR
+  adj_elect[7] = -V_RF3 + dcBL   -- rod_3_BL
+  adj_elect[8] =  V_RF3 + dcBR   -- rod_3_BR
+
+  -- Optical endcaps (electrodes 9, 10) — gated by triggers.
+  -- 0 V until trigger fires, then schedule runs from t=0 of that schedule.
   local t9 = _trig_t(9, t)
-  if t9 then
-    local amp2  = #_v_rf2 > 0 and _interp(_vt, _v_rf2, t9) or _V0_2_default
-    local dc2   = #_v_dc2  > 0 and _interp(_vt, _v_dc2,  t9) or 0.0
-    local V_RF2 = amp2 * math.cos(_rf_omega_2 * t)
-    adj_elect[9]  =  V_RF2 + dc2   -- trap rod pair 1, TL+BR
-    adj_elect[10] = -V_RF2 + dc2   -- trap rod pair 2, TR+BL
-  else
-    adj_elect[9]  = 0
-    adj_elect[10] = 0
-  end
+  if t9 then adj_elect[9]  = #_v_ec_opt_U > 0 and _interp(_vt, _v_ec_opt_U, t9) or 0
+  else       adj_elect[9]  = 0 end
+  local t10 = _trig_t(10, t)
+  if t10 then adj_elect[10] = #_v_ec_opt_D > 0 and _interp(_vt, _v_ec_opt_D, t10) or 0
+  else        adj_elect[10] = 0 end
 
-  -- Perpendicular trap DC (electrodes 11, 12)
-  local t11 = _trig_t(11, t); if t11 then if #_v11 > 0 then adj_elect[11] = _interp(_vt, _v11, t11) end else adj_elect[11] = 0 end
-  local t12 = _trig_t(12, t); if t12 then if #_v12 > 0 then adj_elect[12] = _interp(_vt, _v12, t12) end else adj_elect[12] = 0 end
-
-  -- Braking ring electrode (electrode 13)
-  local t13 = _trig_t(13, t); if t13 then if #_v13 > 0 then adj_elect[13] = _interp(_vt, _v13, t13) end else adj_elect[13] = 0 end
-
-  -- Electrodes 14, 15 (glass lenses) are dielectric — not driven here.
+  -- Dielectric volumes (trapping_lens, collection_lens, lens_holder) are not driven here.
 end
 
 

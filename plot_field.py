@@ -1,12 +1,12 @@
 """
 plot_field.py  –  Parse SIMION PA files and visualise the electric field
-inside the Paul trap for any electrode.
+inside the Paul trap for any of the 10 electrodes.
 
 Reads a paulTrap.paN file, computes E = -grad(V), and saves a two-panel PNG:
-  Left  – cross-section at the trap axis showing potential + E vectors
-            (X-Z plane for main trap,  Y-Z plane for perp-trap)
-  Right – axial field profile along the trap axis
-            (Ez vs Z for main trap,  Ex vs X for perp-trap)
+  Left  – X-Z cross-section at the trap axis showing potential + E vectors
+  Right – Ez vs Z along the trap axis (RF screening visible)
+
+All rods are along Z in the new geometry, so every electrode uses the X-Z slice.
 
 PA binary format (56-byte header, confirmed for this project):
   [0:4]  int32 flags  [4:8] int32  [8:16] float64 scale_ref
@@ -16,9 +16,9 @@ PA binary format (56-byte header, confirmed for this project):
   Other electrode surfaces: sign bit set.  This electrode: value ≈ 200000.
 
 Usage:
-    python plot_field.py                  # all DC electrodes (3,6,7,8,11,12)
-    python plot_field.py --elec 3         # left end cap
-    python plot_field.py --elec 11        # trapping lens holder
+    python plot_field.py                  # all DC electrodes (3, 4, 9, 10)
+    python plot_field.py --elec 3         # load endcap U
+    python plot_field.py --elec 5         # set-3 rod TL
     python plot_field.py --3d             # also open PyVista window
     python plot_field.py --screenshot s.png
 """
@@ -30,53 +30,46 @@ import matplotlib.pyplot as plt
 BASE = os.path.dirname(os.path.abspath(__file__))
 
 # ── Grid constants (must match pa_define in paulTrap.gem) ─────────────────────
-NX, NY, NZ = 131, 91, 855   # grid points  (65/0.5+1, 45/0.5+1, 427/0.5+1)
+# PLACEHOLDER: update NX, NY, NZ, DX, and GEM_OFF after the new pa_define is set.
+NX, NY, NZ = 131, 91, 855   # grid points
 DX         = 0.5             # mm per grid unit
 HEADER     = 56              # bytes
 
 # GEM index → Fusion world:  Fusion = i*DX + GEM_OFF
-# locate(25, 8, 132) → GEM_OFF = (-25, -8, -132)
+# PLACEHOLDER: must match the locate(...) block in paulTrap.gem.
 GEM_OFF = np.array([-25.0, -8.0, -132.0])
 
-# Main Paul trap axis (GEM indices)
-# Axis at Fusion (0.000, 19.050):  GEM x=25.0 mm → ix=50,  GEM y=27.050 mm → iy=54
+# Trap axis (GEM indices) — shared by sets 1, 2, 3 (all rods parallel to Z).
+# PLACEHOLDER: update after new Fusion geometry sets the (x, y) of the axis.
+# The user adjusted the axis to coincide with the midpoint of the optical trap.
 MAIN_IX = 50
 MAIN_IY = 54
 
-# Perpendicular trap axis (GEM indices)
-# Axis at Fusion Y=19.564, Z=276.006:  GEM iy=55,  iz=816
-PERP_IY = 55
-PERP_IZ = 816
-
-# cross_plane 'xz': X-Z slice at MAIN_IY, axial Ez vs Z
-# cross_plane 'yz': Y-Z slice at x_gem, axial Ex vs X at (PERP_IY, PERP_IZ)
+# Per-electrode metadata used for slice placement and STL overlay in 3-D view.
+# z_gem is the Z (GEM, mm) at the geometric centre of the electrode body.
+# PLACEHOLDER: replace every z_gem with the actual centroid Z from Fusion (in
+# Fusion coords, add 132 mm if using the current default GEM_OFF).
 _ELEC_INFO = {
-    1:  dict(cross_plane='xz', z_gem=111.4, stl="rod_P1_L1.stl",
-             label="Rod pair 1 left (1, +RF)"),
-    2:  dict(cross_plane='xz', z_gem=111.4, stl="rod_P2_L1.stl",
-             label="Rod pair 2 left (2, −RF)"),
-    3:  dict(cross_plane='xz', z_gem=17.0,  stl="endcap_L.stl",
-             label="Left end cap (3, V_endcap)"),
-    4:  dict(cross_plane='xz', z_gem=301.2, stl="rod_P1_R1.stl",
-             label="Rod pair 1 right (4, +RF)"),
-    5:  dict(cross_plane='xz', z_gem=301.2, stl="rod_P2_R1.stl",
-             label="Rod pair 2 right (5, −RF)"),
-    6:  dict(cross_plane='xz', z_gem=199.4, stl="ring_L.stl",
-             label="Ring L (6, V_ring_L)"),
-    7:  dict(cross_plane='xz', z_gem=242.4, stl="ring_R.stl",
-             label="Ring R (7, V_ring_R)"),
-    8:  dict(cross_plane='xz', z_gem=50.8,  stl="endcap_R.stl",
-             label="Right end cap (8, V_endcap_R)"),
-    9:  dict(cross_plane='yz', z_gem=408.0, x_gem=40.4, stl="trap_rod_TL.stl",
-             label="Perp rod pair 1 (9, +RF2)"),
-    10: dict(cross_plane='yz', z_gem=408.0, x_gem=40.4, stl="trap_rod_TR.stl",
-             label="Perp rod pair 2 (10, −RF2)"),
-    11: dict(cross_plane='yz', z_gem=408.0, x_gem=29.8, stl="trapping_lens_holder.stl",
-             label="Trapping lens holder (11, V_trap_lens)"),
-    12: dict(cross_plane='yz', z_gem=408.0, x_gem=18.9, stl="collection_lens_holder.stl",
-             label="Collection lens holder (12, V_coll_lens)"),
-    13: dict(cross_plane='xz', z_gem=0.0,  stl="ring_brake.stl",
-             label="Ring brake (13, V_ring_brake)"),  # z_gem: PLACEHOLDER — update after export
+    1:  dict(cross_plane='xz', z_gem=0.0, stl="rod_1_TL.stl",
+             label="Sets 1+2 +RF (1)"),
+    2:  dict(cross_plane='xz', z_gem=0.0, stl="rod_1_TR.stl",
+             label="Sets 1+2 −RF (2)"),
+    3:  dict(cross_plane='xz', z_gem=0.0, stl="endcap_load_U.stl",
+             label="Load endcap U (3, V_endcap_load_U)"),
+    4:  dict(cross_plane='xz', z_gem=0.0, stl="endcap_load_D.stl",
+             label="Load endcap D (4, V_endcap_load_D)"),
+    5:  dict(cross_plane='xz', z_gem=0.0, stl="rod_3_TL.stl",
+             label="rod_3_TL (5, +RF3 + V_dc_3_TL)"),
+    6:  dict(cross_plane='xz', z_gem=0.0, stl="rod_3_TR.stl",
+             label="rod_3_TR (6, −RF3 + V_dc_3_TR)"),
+    7:  dict(cross_plane='xz', z_gem=0.0, stl="rod_3_BL.stl",
+             label="rod_3_BL (7, −RF3 + V_dc_3_BL)"),
+    8:  dict(cross_plane='xz', z_gem=0.0, stl="rod_3_BR.stl",
+             label="rod_3_BR (8, +RF3 + V_dc_3_BR)"),
+    9:  dict(cross_plane='xz', z_gem=0.0, stl="endcap_optical_U.stl",
+             label="Optical endcap U (9, V_endcap_optical_U)"),
+    10: dict(cross_plane='xz', z_gem=0.0, stl="endcap_optical_D.stl",
+             label="Optical endcap D (10, V_endcap_optical_D)"),
 }
 
 
@@ -231,8 +224,10 @@ def _plot_xz(ax1, ax2, V, Ex, Ey, Ez, elec_other, elec_this,
     zc_f = zc_gem + GEM_OFF[2]
     ax2.axvline(zc_f, color="dimgrey", lw=1, ls=":", alpha=0.8,
                 label=f"Electrode  z = {zc_f:.1f} mm")
-    ax2.axvspan(-132.0,  75.3, alpha=0.07, color="navy",   label="Left rod section")
-    ax2.axvspan( 102.4, 236.0, alpha=0.07, color="purple", label="Right rod section")
+    # PLACEHOLDER: update Z ranges to shade the new rod sections (sets 1, 2, 3 in Fusion world).
+    # ax2.axvspan(z_set1_min, z_set1_max, alpha=0.07, color="navy",      label="Set 1 (loading)")
+    # ax2.axvspan(z_set2_min, z_set2_max, alpha=0.07, color="purple",    label="Set 2 (RF guide)")
+    # ax2.axvspan(z_set3_min, z_set3_max, alpha=0.07, color="darkgreen", label="Set 3 (optical PT)")
 
     ax2.set_xlabel("Z  (mm, Fusion world)")
     ax2.set_ylabel(r"$E_z$  (V/mm per unit V)", color="steelblue")
@@ -412,8 +407,8 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--elec", type=int,
-                    choices=list(range(1, 14)), default=None,
-                    help="Electrode number 1–13 (default: all DC electrodes)")
+                    choices=list(range(1, 11)), default=None,
+                    help="Electrode number 1–10 (default: all DC electrodes)")
     ap.add_argument("--3d",   dest="show3d", action="store_true",
                     help="Open interactive 3-D PyVista window")
     ap.add_argument("--screenshot", default=None,
@@ -421,8 +416,8 @@ def main():
     args   = ap.parse_args()
     do_3d  = args.show3d or bool(args.screenshot)
 
-    # Default: all DC electrodes (both traps)
-    elecs = [args.elec] if args.elec else [3, 6, 7, 8, 13, 11, 12]
+    # Default: all DC endcaps (the four bias electrodes — rest are RF-driven)
+    elecs = [args.elec] if args.elec else [3, 4, 9, 10]
 
     for en in elecs:
         pa_path = os.path.join(BASE, f"paulTrap.pa{en}")

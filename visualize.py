@@ -27,30 +27,32 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 
 # ── Electrode geometry ────────────────────────────────────────────────────────
 # (filename, RGB color, opacity, label)
-# +RF = warm red, -RF = steel blue, end cap = teal, rings = amber
+# +RF = warm red, −RF = steel blue, endcaps = teal/seagreen, dielectrics = pale cyan
 ELECTRODES = [
-    ("rod_P1_L1.stl",  (0.85, 0.20, 0.15), 0.40, "Pair 1 (+RF)"),
-    ("rod_P1_L2.stl",  (0.85, 0.20, 0.15), 0.40, None),
-    ("rod_P2_L1.stl",  (0.20, 0.45, 0.80), 0.40, "Pair 2 (−RF)"),
-    ("rod_P2_L2.stl",  (0.20, 0.45, 0.80), 0.40, None),
-    ("endcap_L.stl",   (0.15, 0.70, 0.55), 0.55, "End cap L"),
-    ("endcap_R.stl",   (0.15, 0.70, 0.55), 0.55, "End cap R"),
-    ("rod_P1_R1.stl",  (0.85, 0.20, 0.15), 0.40, None),
-    ("rod_P1_R2.stl",  (0.85, 0.20, 0.15), 0.40, None),
-    ("rod_P2_R1.stl",  (0.20, 0.45, 0.80), 0.40, None),
-    ("rod_P2_R2.stl",  (0.20, 0.45, 0.80), 0.40, None),
-    ("ring_L.stl",     (0.90, 0.65, 0.10), 0.60, "Ring L"),
-    ("ring_R.stl",     (0.90, 0.65, 0.10), 0.60, "Ring R"),
-    ("ring_brake.stl", (0.72, 0.35, 0.05), 0.60, "Ring brake"),
-    # Perpendicular Paul trap (axis along X)
-    ("trap_rod_TL.stl",            (0.85, 0.20, 0.15), 0.40, "Perp +RF2"),
-    ("trap_rod_BR.stl",            (0.85, 0.20, 0.15), 0.40, None),
-    ("trap_rod_TR.stl",            (0.20, 0.45, 0.80), 0.40, "Perp −RF2"),
-    ("trap_rod_BL.stl",            (0.20, 0.45, 0.80), 0.40, None),
-    ("trapping_lens_holder.stl",   (0.60, 0.20, 0.70), 0.55, "Trap lens holder"),
-    ("collection_lens_holder.stl", (0.60, 0.20, 0.70), 0.55, "Coll lens holder"),
-    ("trapping_lens.stl",          (0.50, 0.90, 0.95), 0.30, "Trap lens (glass)"),
-    ("collection_lens.stl",        (0.50, 0.90, 0.95), 0.30, None),
+    # Set 1 (loading Paul trap)
+    ("rod_1_TL.stl",         (0.85, 0.20, 0.15), 0.40, "Sets 1+2 (+RF)"),
+    ("rod_1_BR.stl",         (0.85, 0.20, 0.15), 0.40, None),
+    ("rod_1_TR.stl",         (0.20, 0.45, 0.80), 0.40, "Sets 1+2 (−RF)"),
+    ("rod_1_BL.stl",         (0.20, 0.45, 0.80), 0.40, None),
+    # Set 2 (RF guide, after gate valve)
+    ("rod_2_TL.stl",         (0.85, 0.20, 0.15), 0.40, None),
+    ("rod_2_BR.stl",         (0.85, 0.20, 0.15), 0.40, None),
+    ("rod_2_TR.stl",         (0.20, 0.45, 0.80), 0.40, None),
+    ("rod_2_BL.stl",         (0.20, 0.45, 0.80), 0.40, None),
+    # Set 3 (optical Paul trap, all 4 independent)
+    ("rod_3_TL.stl",         (1.00, 0.45, 0.20), 0.40, "Set 3 TL"),
+    ("rod_3_TR.stl",         (1.00, 0.65, 0.20), 0.40, "Set 3 TR"),
+    ("rod_3_BL.stl",         (0.35, 0.55, 0.85), 0.40, "Set 3 BL"),
+    ("rod_3_BR.stl",         (0.55, 0.65, 0.85), 0.40, "Set 3 BR"),
+    # Endcaps (4)
+    ("endcap_load_U.stl",    (0.15, 0.70, 0.55), 0.55, "Load endcap U (3)"),
+    ("endcap_load_D.stl",    (0.15, 0.70, 0.55), 0.55, "Load endcap D (4)"),
+    ("endcap_optical_U.stl", (0.10, 0.55, 0.30), 0.55, "Optical endcap U (9)"),
+    ("endcap_optical_D.stl", (0.10, 0.55, 0.30), 0.55, "Optical endcap D (10)"),
+    # Dielectric volumes
+    ("trapping_lens.stl",    (0.50, 0.90, 0.95), 0.30, "Trap lens (dielectric)"),
+    ("collection_lens.stl",  (0.50, 0.90, 0.95), 0.30, "Coll lens (dielectric)"),
+    ("lens_holder.stl",      (0.85, 0.80, 0.65), 0.30, "Lens holder (dielectric)"),
 ]
 
 

@@ -1,15 +1,17 @@
 # RF Guide SIMION Simulation
 
-SIMION 8.2 particle-trajectory simulation of 166 nm silica nanospheres through a linear Paul trap RF guide, with a perpendicular Paul trap at the exit for retrapping. The geometry is designed for loading an optical trap across a gate-valve gap.
+SIMION 8.2 particle-trajectory simulation of 166 nm silica nanospheres through a linear Paul trap RF guide, with a parallel-axis Paul trap at the downstream end that surrounds the optical-trap lenses. The geometry is designed for loading a tightly-focused 1064 nm optical trap from a remote loading region across a gate-valve gap.
 
 ## Repository layout
 
 ```
-paulTrap.gem                 SIMION geometry definition (electrodes + PA dimensions)
+paulTrap.gem                 SIMION geometry definition (10 electrodes + PA dimensions)
 paulTrap.lua                 User program: RF fast-adjust, Epstein drag, gravity,
                              trajectory recording
-generate_voltages.py         Write voltage schedule CSV for both traps
-generate_dielectric_pa.py    Build the dielectric permittivity array for the glass lenses
+trap_config.lua              Gas, particle, drag, trigger, and start-position config
+generate_voltages.py         Write voltage schedule CSV for all 10 electrodes
+generate_dielectric_pa.py    Build the dielectric permittivity array for the lenses
+                             and the single uniform lens holder
 refine_with_dielectric.lua   Re-refine electrode PAs with dielectric effects (run in SIMION)
 animate.py                   2-panel animation: trajectory + voltage timeline
 visualize.py                 Interactive 3-D view of geometry + trajectories (PyVista)
@@ -23,21 +25,36 @@ STL files for every electrode and dielectric body must be present in this direct
 
 ## 1. Coordinate system
 
-All STL files are exported in **Fusion world coordinates** (mm). The GEM file uses a `locate(tx, ty, tz)` block that converts Fusion coordinates to SIMION GEM coordinates:
+All STL files are exported in **Fusion world coordinates** (mm). The GEM file uses a `locate(tx, ty, tz)` block to convert Fusion coordinates to SIMION GEM coordinates:
 
 ```
-GEM x = Fusion X + 25
-GEM y = Fusion Y +  8
-GEM z = Fusion Z + 132
+GEM x = Fusion X + tx
+GEM y = Fusion Y + ty
+GEM z = Fusion Z + tz
 ```
 
-Seed points inside the GEM file are therefore written directly as Fusion coordinates. The Python scripts use the same convention (`GEM_OFF = [-25, -8, -132]`).
+The Python scripts use the same convention via `GEM_OFF = (-tx, -ty, -tz)`.
+
+### Labelling convention
+
+Looking down the RF guide axis:
+
+| Letter | Meaning |
+|--------|---------|
+| L      | −x      |
+| R      | +x      |
+| T      | +y      |
+| B      | −y      |
+| U      | +z (upstream)   |
+| D      | −z (downstream) |
+
+Rods are named with a set number (1–3) and a TL/TR/BL/BR suffix. Endcaps are named with `load`/`optical` and a U/D suffix.
 
 ---
 
 ## 2. Exporting geometry from Autodesk Fusion
 
-Each electrode body must be exported as a separate binary STL file in millimetres. Repeat the following for every body:
+Each body must be exported as a separate binary STL file in millimetres. Repeat the following for every body:
 
 1. In the canvas, right-click the component and select **Find in Browser**. This highlights the component in the browser panel.
 2. In the browser, expand the component until the **Body** is visible. Right-click the body and select **Isolate** so that only this body is shown.
@@ -47,10 +64,33 @@ Each electrode body must be exported as a separate binary STL file in millimetre
    - **Unit Type:** Millimeter
    - **Structure:** One File
    - **Refinement:** High
-5. Click **OK** and save the file to this project directory using the filename referenced in `paulTrap.gem` (e.g. `rod_P1_L1.stl`).
-6. Turn off Isolate before exporting the next body (right-click the top-level assembly → **Isolate** again to toggle it off).
+5. Click **OK** and save the file to this project directory using the filename referenced in `paulTrap.gem` (e.g. `rod_1_TL.stl`).
+6. Turn off Isolate before exporting the next body.
 
-> The STL origin is the Fusion world origin, so no manual coordinate adjustments are needed — SIMION reads the Fusion coordinates directly via the `locate` block in the GEM.
+> The STL origin is the Fusion world origin, so no manual coordinate adjustments are needed — SIMION reads Fusion coordinates directly via the `locate` block in the GEM.
+
+### STL filename inventory
+
+Rod sets (12 total):
+
+```
+rod_1_TL.stl  rod_1_TR.stl  rod_1_BL.stl  rod_1_BR.stl    (set 1, loading Paul trap)
+rod_2_TL.stl  rod_2_TR.stl  rod_2_BL.stl  rod_2_BR.stl    (set 2, RF guide after gate valve)
+rod_3_TL.stl  rod_3_TR.stl  rod_3_BL.stl  rod_3_BR.stl    (set 3, optical Paul trap, wider)
+```
+
+Endcaps (4 total):
+
+```
+endcap_load_U.stl     endcap_load_D.stl
+endcap_optical_U.stl  endcap_optical_D.stl
+```
+
+Dielectric volumes (3 total):
+
+```
+trapping_lens.stl    collection_lens.stl    lens_holder.stl
+```
 
 ---
 
@@ -61,22 +101,21 @@ Each electrode body must be exported as a separate binary STL file in millimetre
 ### Potential array
 
 ```lua
-pa_define{59*mm, 45*mm, 427*mm, 'planar', dx=0.5, surface='fractional',
-          filename="paulTrap.pa0"}
+pa_define{Nx*mm, Ny*mm, Nz*mm, 'planar', dx=0.5,
+          filename="paulTrap.pa0", surface="fractional"}
 ```
 
 - Dimensions must enclose all electrode geometry with at least ~5 mm clearance on every side.
-- `dx=0.5` is used for fast testing. Change to `dx=0.15` for production runs (increases file size ~37×).
-- `surface='fractional'` (sub-grid surface enhancement) is **incompatible with SIMION 8.2's dielectric solver** and is therefore omitted. If you need higher electrode-surface accuracy without dielectrics, you can add `surface='fractional'` back, but you will not be able to run `refine_with_dielectric.lua` afterwards.
+- `dx=0.5` is used for fast testing. Change to `dx=0.15` for production runs.
+- `surface='fractional'` (sub-grid surface enhancement) is **incompatible with SIMION 8.2's dielectric solver** and must be omitted when running `refine_with_dielectric.lua` afterwards.
 - Update the three dimensions and the `locate` offsets whenever the geometry changes significantly.
 
 ### locate block
 
 ```lua
-locate(25, 8, 132) {
-  -- seed points in Fusion world coordinates (mm)
+locate(tx, ty, tz) {
   e(1) {
-    stl(D.."rod_P1_L1.stl",  -2.1082, 21.1582, -20.6470)
+    stl(D.."rod_1_TL.stl",  x_seed, y_seed, z_seed)
     ...
   }
 }
@@ -96,28 +135,25 @@ def centroid(path):
     return np.array(v).mean(axis=0)
 for p in sys.argv[1:]: print(p, centroid(p))
 EOF
-rod_P1_L1.stl endcap_L.stl   # replace with the files you need
+rod_1_TL.stl rod_3_BR.stl endcap_load_U.stl   # replace with the files you need
 ```
 
 ### Electrode numbering
 
 | # | Name | Type | Drive |
 |---|------|------|-------|
-| 1 | Rod pair 1, left (P1_L1 + P1_L2) | RF | +RF |
-| 2 | Rod pair 2, left (P2_L1 + P2_L2) | RF | −RF |
-| 3 | Left end cap | DC | `V_endcap` |
-| 4 | Rod pair 1, right (P1_R1 + P1_R2) | RF | +RF |
-| 5 | Rod pair 2, right (P2_R1 + P2_R2) | RF | −RF |
-| 6 | Ring electrode, left | DC | `V_ring_L` |
-| 7 | Ring electrode, right | DC | `V_ring_R` |
-| 8 | Right end cap | DC | `V_endcap_R` |
-| 9 | Perp-trap rod pair 1 (TL + BR) | RF | +RF2 |
-| 10 | Perp-trap rod pair 2 (TR + BL) | RF | −RF2 |
-| 11 | Trapping lens holder | DC | `V_trap_lens` |
-| 12 | Collection lens holder | DC | `V_coll_lens` |
-| 13 | Braking ring electrode | DC | `V_ring_brake` |
+| 1 | Sets 1+2 +RF  (rod_1_TL, rod_1_BR, rod_2_TL, rod_2_BR) | RF  | +V_RF·cos(ω_RF t) |
+| 2 | Sets 1+2 −RF  (rod_1_TR, rod_1_BL, rod_2_TR, rod_2_BL) | RF  | −V_RF·cos(ω_RF t) |
+| 3 | endcap_load_U                                          | DC  | `V_endcap_load_U` |
+| 4 | endcap_load_D                                          | DC  | `V_endcap_load_D` |
+| 5 | rod_3_TL                                               | RF+DC | +V_RF3·cos(ω_RF3 t) + `V_dc_3_TL` |
+| 6 | rod_3_TR                                               | RF+DC | −V_RF3·cos(ω_RF3 t) + `V_dc_3_TR` |
+| 7 | rod_3_BL                                               | RF+DC | −V_RF3·cos(ω_RF3 t) + `V_dc_3_BL` |
+| 8 | rod_3_BR                                               | RF+DC | +V_RF3·cos(ω_RF3 t) + `V_dc_3_BR` |
+| 9 | endcap_optical_U                                       | DC  | `V_endcap_optical_U` (triggered) |
+| 10| endcap_optical_D                                       | DC  | `V_endcap_optical_D` (triggered) |
 
-Electrodes 14 and 15 (glass lenses) are **not defined in the GEM**. They are dielectric, not conductive — see Section 5.
+`trapping_lens.stl`, `collection_lens.stl`, and `lens_holder.stl` are **not defined in the GEM**. They are dielectric, not conductive — see Section 5.
 
 After any geometry change, run the sanity check before refining:
 
@@ -129,15 +165,15 @@ After any geometry change, run the sanity check before refining:
 
 ## 4. Standard refinement (no dielectrics)
 
-Open SIMION, load `paulTrap.gem`, and click **Refine**. SIMION creates one potential array per electrode: `paulTrap.pa0` (geometry) and `paulTrap.pa1` through `paulTrap.pa12`.
+Open SIMION, load `paulTrap.gem`, and click **Refine**. SIMION creates one potential array per electrode: `paulTrap.pa0` (geometry) and `paulTrap.pa1` through `paulTrap.pa10`.
 
-If the dielectric lenses are not needed for a particular run, stop here and proceed to Section 6.
+If the dielectric volumes are not needed for a particular run, stop here and proceed to Section 6.
 
 ---
 
-## 5. Dielectric refinement (glass lenses)
+## 5. Dielectric refinement (lenses + lens holder)
 
-SIMION's dielectric solver requires a **separate permittivity array** alongside the standard electric PAs. The lenses must be absent from the electric PA (they are already omitted from `paulTrap.gem`) and encoded only in this permittivity array.
+SIMION's dielectric solver requires a **separate permittivity array** alongside the standard electric PAs. The dielectric bodies must be absent from the electric PA (they are already omitted from `paulTrap.gem`) and encoded only in this permittivity array.
 
 ### Step 1 — Generate the dielectric PA
 
@@ -145,67 +181,72 @@ SIMION's dielectric solver requires a **separate permittivity array** alongside 
 ~/.venvs/mesh/bin/python3 generate_dielectric_pa.py
 ```
 
-This creates `paulTrap-dielectric.pa` (≈ 69 MB). The file assigns ε_r = `EPSILON_GLASS` (defined at the top of the script, currently 3.0 — update it to the correct value for your glass) to every grid cell whose centre falls inside a lens mesh, and ε_r = 1.0 elsewhere.
+This creates `paulTrap-dielectric.pa`. The file assigns ε_r = `EPSILON_GLASS` (defined at the top of the script — currently 3.0, fused-silica-and-PEEK ballpark) to every grid cell whose centre falls inside any of `trapping_lens.stl`, `collection_lens.stl`, or `lens_holder.stl`. All other cells are ε_r = 1.0.
 
-**Run this step whenever `EPSILON_GLASS` changes or when the lens STL files are updated.**
+**Run this step whenever `EPSILON_GLASS` changes or when the dielectric STL files are updated.**
 
 ### Step 2 — Re-refine electrode PAs with the dielectric
 
-From within SIMION, run `refine_with_dielectric.lua` (File → Run Lua Script, or from the SIMION command line with `--nogui lua`). This re-refines `pa1` through `pa12` incorporating the lens permittivity. The fast-adjust system will then work normally.
+From within SIMION, run `refine_with_dielectric.lua` (File → Run Lua Script, or from the SIMION command line with `--nogui lua`). This re-refines `pa1` through `pa10` incorporating the dielectric permittivity. The fast-adjust system will then work normally.
 
-**Run this step after every standard Refine (Step 1 of Section 4) and after every dielectric PA regeneration.**
+**Run this step after every standard Refine and after every dielectric PA regeneration.**
 
 ---
 
 ## 6. Creating a voltage schedule
 
-Edit `generate_voltages.py` to define the time-varying voltages for both traps, then run it:
+Edit `generate_voltages.py` to define the time-varying voltages for all 10 electrodes, then run it:
 
 ```bash
 ~/.venvs/nano/bin/python3 generate_voltages.py
 ```
 
-This produces `voltages_1.csv` (or `voltages_N.csv` — set `OUT_NUMBER` at the top of the script) and opens a preview plot showing all channels. The CSV format is:
+This produces `voltages_1.csv` (or `voltages_N.csv` — pass `--out N`) and opens a preview plot showing all channels. The CSV format is:
 
 ```
 # f_RF_Hz=<value>
-# f_RF2_Hz=<value>
-time_us, V_endcap, V_endcap_R, V_ring_L, V_ring_R, V_RF, V_RF2, V_trap_lens, V_coll_lens
+# f_RF3_Hz=<value>
+time_us, V_RF, V_RF3,
+         V_endcap_load_U, V_endcap_load_D,
+         V_dc_3_TL, V_dc_3_TR, V_dc_3_BL, V_dc_3_BR,
+         V_endcap_optical_U, V_endcap_optical_D
 ```
 
 SIMION interpolates voltages linearly between rows. For a sharp step, place two rows at the same time (or 0.1 µs apart).
 
 ### Key parameters to set
 
-| Parameter | Location | Description |
-|-----------|----------|-------------|
-| `f_RF` | top of script | Main trap RF carrier frequency (Hz) |
-| `f_RF2` | top of script | Perp-trap RF carrier frequency (Hz) — **PLACEHOLDER** |
-| `V_RF` | body of script | Main trap RF zero-to-peak amplitude vs time |
-| `V_RF2` | body of script | Perp-trap RF amplitude — **PLACEHOLDER** (currently 0 V) |
-| `V_trap_lens` | body of script | Trapping lens holder DC bias — **PLACEHOLDER** |
-| `V_coll_lens` | body of script | Collection lens holder DC bias — **PLACEHOLDER** |
+| Parameter | Description |
+|-----------|-------------|
+| `f_RF`     | Sets 1+2 RF carrier frequency (Hz) |
+| `f_RF3`    | Set 3 RF carrier frequency (Hz) — **PLACEHOLDER** |
+| `V_RF`     | Sets 1+2 RF zero-to-peak amplitude vs time |
+| `V_RF3`    | Set 3 RF amplitude — **PLACEHOLDER** (currently 0 V) |
+| `V_dc_3_TL/TR/BL/BR` | Per-rod DC trims on set 3 (shift equilibrium toward optical focus) |
+| `V_endcap_load_U/D`  | Load Paul trap endcap DC biases |
+| `V_endcap_optical_U/D` | Optical Paul trap endcap DC biases (gated by trigger) |
+
+Set 3 has 4 fully-independent SIMION electrodes; equal-and-opposite DC trims on opposite rods shift the equilibrium laterally, while common-mode trims raise the mean rod potential.
 
 ---
 
 ## 7. Running a simulation in SIMION
 
-1. Load the workbench (`.iob` file) in SIMION.
+1. Load the workbench (`.iob` file) in SIMION. The workbench must have **10 electrode slots** matching the new GEM.
 2. In the **Variables** panel, set:
    - `voltage_file_number` — integer N matching the `voltages_N.csv` file to use
    - `run_number` — integer appended to the output trajectory filename
-   - `drag_scale` — set to 0 to disable Epstein drag (useful for field testing); 1 for full physics
-   - `v_stop` — ion is terminated when its speed falls below this value (mm/µs); set to 0 to disable
-   - `record_stride` — write one trajectory row every N time steps; larger = smaller output file
-3. Define ions in the **Particles** panel: mass ≈ 3.19 × 10⁶ u (for 166 nm silica sphere, 100 electron charges), charge = 100.
-4. Click **Fly'm**.
+3. Define ions in the **Particles** panel: mass ≈ 3.19 × 10⁶ u (for 166 nm silica sphere, 100 electron charges), charge = 100. (`paulTrap.lua` overrides these from `trap_config.lua` on every ion, so the values here are placeholders.)
+4. Edit `trap_config.lua` to set particle start positions, triggers, gas, and drag scaling.
+5. Click **Fly'm**.
 
 Trajectories are written to `trajectories_N.csv` in the project directory (Fusion world coordinates). Voltages are read from `voltages_N.csv`.
 
 ### Physics implemented in `paulTrap.lua`
 
-- **RF fast-adjust**: electrodes 1, 2, 4, 5 driven analytically at `f_RF`; electrodes 9, 10 at `f_RF2`.
-- **DC schedule**: electrodes 3, 6, 7, 8, 11, 12 interpolated from the voltage CSV.
+- **RF fast-adjust**: electrodes 1, 2 driven analytically at `f_RF`; electrodes 5–8 at `f_RF3` (diagonal-pair phasing: TL+BR get +V_RF3, TR+BL get −V_RF3).
+- **DC schedule**: electrodes 3, 4, 5–8 (DC trim part), 9, 10 interpolated from the voltage CSV.
+- **Triggers**: only electrodes 9, 10 (optical endcaps) are gated; they sit at 0 V until the ion's Fusion-z crosses the threshold in `trap_config.lua`, then follow the schedule from t=0 of trigger-fire.
 - **Epstein drag** (free-molecular regime, Kn ≈ 800 at 1 mbar): `β = (8π/3) r² P / c̄`; damping rate `γ = β / m`.
 - **Gravity** in −Y (9.81 × 10⁻⁹ mm/µs²).
 - **Finite-timestep drag correction** to avoid underestimating drag over long steps.
@@ -238,11 +279,12 @@ Loads all STL files and overlays trajectory paths coloured by time-of-flight. Re
 ### Electric field cross-sections
 
 ```bash
-~/.venvs/nano/bin/python3 plot_field.py --elec 8   # right end cap
-~/.venvs/nano/bin/python3 plot_field.py             # all DC electrodes (3, 6, 7, 8)
+~/.venvs/nano/bin/python3 plot_field.py --elec 3   # load endcap U
+~/.venvs/nano/bin/python3 plot_field.py --elec 5   # set-3 TL rod
+~/.venvs/nano/bin/python3 plot_field.py            # all DC endcaps (3, 4, 9, 10)
 ```
 
-Parses the SIMION PA binary files and produces a two-panel figure: an X-Z cross-section of the potential with field vectors, and an axial E_z profile showing field screening by the RF rods. Output saved as `field_N.png`.
+Parses the SIMION PA binary files and produces a two-panel figure: an X-Z cross-section of the potential with field vectors, and an axial E_z profile. Output saved as `field_N.png`.
 
 ---
 
@@ -259,9 +301,15 @@ Parses the SIMION PA binary files and produces a two-panel figure: an X-Z cross-
 
 The following values are set to approximate defaults and should be updated before production runs:
 
-- **`EPSILON_GLASS`** in `generate_dielectric_pa.py` (currently 3.0). Typical values: fused silica ≈ 3.82 (DC), N-BK7 ≈ 7.1 (DC). For optical-frequency fields use n² instead (fused silica at 1064 nm: n ≈ 1.46, ε_r ≈ 2.13).
-- **`f_RF2`** in `generate_voltages.py` — RF frequency for the perpendicular trap. Compute from the trap r₀ and the target stability parameter q < 0.908.
-- **`V_RF2`** in `generate_voltages.py` — RF amplitude for the perpendicular trap (currently 0 V; the trap is inactive).
-- **`V_trap_lens`** and **`V_coll_lens`** in `generate_voltages.py` — DC biases for the perp-trap axial confinement (currently 0 V).
+- **`pa_define` extents and `locate(tx, ty, tz)` offsets** in `paulTrap.gem` — must reflect the new Fusion bounding box after re-export.
+- **Every `stl()` seed point** in `paulTrap.gem` — currently `(0, 0, 0)` placeholders; replace with each STL's actual Fusion centroid.
+- **`EPSILON_GLASS`** in `generate_dielectric_pa.py` (currently 3.0). Typical values: fused silica ≈ 3.82 (DC), PEEK ≈ 3.2.
+- **`f_RF3`** and **`V_RF3`** in `generate_voltages.py` — RF frequency and amplitude for the optical Paul trap (set 3). Compute from set 3 r₀ and a target stability parameter q < 0.908.
+- **Trigger z_mm** in `trap_config.lua` — Fusion-Z threshold at which the optical endcaps fire.
+- **Particle start position** in `trap_config.lua` — should be inside the loading Paul trap between endcap_load_U and endcap_load_D.
 - **`dx` in `paulTrap.gem`** — change from 0.5 mm to 0.15 mm for production-quality field calculations (requires re-running all refinement steps).
 - **Ion start position** in the SIMION `.iob` file — GEM coordinates will need updating after any geometry change that shifts the `locate` offsets.
+- **`MAIN_IX`, `MAIN_IY`, `GEM_OFF`, `NX`, `NY`, `NZ`** in `plot_field.py` — update to match new PA geometry.
+- **`GEO` dict** in `animate.py` — Z extents of each rod set and endcap positions are placeholders until the Fusion bounding box is known.
+- **`PA_X/Y/Z` and seed coords** in `sanity_check.py` — same situation.
+- **`stability_map.py`** — designed for the old perpendicular-trap geometry; needs an analysis-layer rewrite to sweep along Z and reflect the new optical-trap physics (PA loading has been updated to the new electrode numbers; visualisation is still legacy).

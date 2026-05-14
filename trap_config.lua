@@ -27,10 +27,16 @@ return {
   -- coordinate first reaches z_mm, then releases them to follow the normal
   -- voltage schedule.  Triggers reset for each ion (sequential simulation).
   --
-  -- Example — activate lens holders when ion enters the perpendicular trap:
-  --   { z_mm = 200.0, electrodes = {11, 12} },
+  -- Only the optical-trap endcaps (electrodes 9, 10) are gated.  Sets 1+2 RF
+  -- (1, 2), load endcaps (3, 4), and set-3 RF + DC trims (5–8) all follow the
+  -- CSV schedule from absolute t = 0.
+  --
+  -- PLACEHOLDER: set z_mm to the Fusion-Z value at the centre of the optical
+  -- Paul trap (between endcap_optical_U and endcap_optical_D).  Particles in
+  -- the new geometry travel in -Z, so threshold should fire as the particle
+  -- decelerates into the optical-trap volume.
   triggers = {
-    { z_mm = 286.0, electrodes = {9, 10, 11, 12} },
+    { z_mm = 0.0, electrodes = {9, 10} },  -- PLACEHOLDER z_mm
   },
 
   -- ── Particle definitions ──────────────────────────────────────────────────
@@ -43,11 +49,13 @@ return {
   -- sigma_mm:  Gaussian 1-σ spread per axis {x,y,z} in mm; omit or zero for point source
   -- Multiple starts entries are assigned round-robin by ion number.
   particles = {
-    n      = 1,
+    n      = 20,
     charge = 100,
     starts = {
-      { x_mm = 0, y_mm = 19, z_mm = -78.5, ke_ev = 0,
-        sigma_mm = { x = 0.1, y = 0.1, z = 0.1 } },
+      -- PLACEHOLDER: set start position to inside the loading Paul trap (sets 1+2),
+      -- between endcap_load_U (+z) and endcap_load_D (-z).  Coordinates are Fusion world (mm).
+      { x_mm = 0, y_mm = 0, z_mm = 0, ke_ev = 0,
+        sigma_mm = { x = 0, y = 0, z = 0.1 } },
     },
   },
 

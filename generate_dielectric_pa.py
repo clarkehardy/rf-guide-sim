@@ -1,10 +1,10 @@
 """
 generate_dielectric_pa.py  –  Build the SIMION dielectric permittivity array
-for the perpendicular-trap glass lenses.
+for the optical-region glass lenses and the lens holder.
 
 The dielectric PA stores relative permittivity (ε_r) at each grid-cell centre.
 It is consumed by refine_with_dielectric.lua, which re-refines every electrode
-PA with it so that the glass lenses correctly modify the electric field.
+PA with it so that the dielectric volumes correctly modify the electric field.
 
 Grid conventions (must match paulTrap.gem):
   Electric PA dimensions : NX=131, NY=91, NZ=855  (pa_define 65×45×427 mm, dx=0.5)
@@ -38,17 +38,19 @@ except ImportError:
 # ── Configuration ──────────────────────────────────────────────────────────────
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-# Dielectric constant of the glass lenses.
-# PLACEHOLDER: replace with the correct value for your glass.
-# Common values: fused silica ≈ 3.82 (DC), BK7 ≈ 7.1 (DC), N-BK7 ≈ 7.1 (DC).
-# For optical-frequency fields the refractive-index squared is used instead
-# (fused silica n≈1.46 → ε_r≈2.13 at 1064 nm).
+# Dielectric constant applied to every mesh in DIELECTRIC_STLS.
+# PLACEHOLDER: replace with the correct value for your materials.  Fused silica
+# ≈ 3.82 (DC); PEEK ≈ 3.2.  These are close enough that a single ε_r covers
+# both lenses and the PEEK holder.  If a per-mesh value is needed later,
+# replace DIELECTRIC_STLS with a {filename: ε_r} dict and update the loop.
 EPSILON_GLASS = 3.0   # PLACEHOLDER
 
-# STL files that define glass dielectric volumes (Fusion world coordinates)
-LENS_STLS = [
+# STL files that define dielectric volumes (Fusion world coordinates).
+# Includes both lenses and the single uniform lens holder.
+DIELECTRIC_STLS = [
     "trapping_lens.stl",
     "collection_lens.stl",
+    "lens_holder.stl",
 ]
 
 # PA grid — must match pa_define in paulTrap.gem
@@ -89,9 +91,9 @@ print(f"Fusion extent: X [{x_c[0]:.2f}, {x_c[-1]:.2f}]  "
 epsilon = np.ones((NZ_D, NY_D, NX_D), dtype=np.float64)  # V[iz, iy, ix] = 1.0
 
 
-# ── Mark lens voxels ──────────────────────────────────────────────────────────
+# ── Mark dielectric voxels ────────────────────────────────────────────────────
 
-for stl_name in LENS_STLS:
+for stl_name in DIELECTRIC_STLS:
     stl_path = os.path.join(BASE, stl_name)
     if not os.path.exists(stl_path):
         print(f"  WARNING: {stl_name} not found — skipping")
@@ -141,8 +143,8 @@ for stl_name in LENS_STLS:
 # ── Write dielectric PA binary file ──────────────────────────────────────────
 
 n_pts   = NX_D * NY_D * NZ_D
-n_glass = int((epsilon > 1.0).sum())
-print(f"\nGlass cells: {n_glass}  ({100*n_glass/n_pts:.3f}% of array)")
+n_diel = int((epsilon > 1.0).sum())
+print(f"\nDielectric cells: {n_diel}  ({100*n_diel/n_pts:.3f}% of array)")
 print(f"Writing {OUT_PA} ...")
 
 # Flatten to 1-D in SIMION storage order: z outermost, x innermost → C order

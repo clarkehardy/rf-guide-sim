@@ -28,21 +28,24 @@ import matplotlib.animation as animation
 BASE = os.path.dirname(os.path.abspath(__file__))
 
 # ── Geometry (Fusion world coordinates, mm) ───────────────────────────────────
-# Approximate bounding boxes from the sanity-check STL analysis.
-# Update these if your CAD dimensions differ.
+# PLACEHOLDER: update every Z span / Y band after the new Fusion geometry is
+# fixed.  Particles travel from the loading Paul trap (set 1, +z side) toward
+# the optical Paul trap (set 3, -z side) along the RF guide (set 2).
 GEO = dict(
-    rod_z_left   = (-116.6,  75.3),   # Z extent of left rod section
-    rod_z_right  = ( 102.4, 236.0),   # Z extent of right rod section
-    rod_y_top    = ( 19.66,  22.66),  # Y band of top rods (center ± 1.5 mm)
-    rod_y_bot    = ( 15.47,  18.47),  # Y band of bottom rods
-    gap_z        = (  75.3, 102.4),   # gate-valve gap
-    endcap_z     =  -115.0,           # left end cap Z
-    endcap_R_z   =  -81.2,            # right end cap Z (update to match GEM seed)
-    ring_L_z     =    67.4,           # ring_L Z (from GEM seed point)
-    ring_R_z     =   110.4,           # ring_R Z (from GEM seed point)
-    perp_trap_z  = ( 264.0, 289.0),   # approximate Z span of perp-trap rods
-    view_z       = (-131.0, 300.0),   # Z axis limits (extended to include perp-trap)
-    view_y       = (  12.0,  27.5),   # Y axis limits (extended for perp-trap top rods)
+    rod_z_set1            = (   0.0,  100.0),  # PLACEHOLDER: set 1 (loading PT) Z extent
+    rod_z_set2            = (-200.0,    0.0),  # PLACEHOLDER: set 2 (RF guide) Z extent
+    rod_z_set3            = (-400.0, -250.0),  # PLACEHOLDER: set 3 (optical PT) Z extent
+    rod_y_top             = ( 19.66,  22.66),  # PLACEHOLDER: top-rod Y band (sets 1+2)
+    rod_y_bot             = ( 15.47,  18.47),  # PLACEHOLDER: bottom-rod Y band (sets 1+2)
+    rod_y_top_3           = ( 25.0,   29.0),   # PLACEHOLDER: top-rod Y band (set 3, wider)
+    rod_y_bot_3           = (  9.0,   13.0),   # PLACEHOLDER: bottom-rod Y band (set 3, wider)
+    gap_z                 = (-110.0, -100.0),  # PLACEHOLDER: gate-valve gap
+    endcap_load_U_z       =  110.0,            # PLACEHOLDER
+    endcap_load_D_z       =  -10.0,            # PLACEHOLDER
+    endcap_optical_U_z    = -250.0,            # PLACEHOLDER
+    endcap_optical_D_z    = -400.0,            # PLACEHOLDER
+    view_z                = (-450.0, 150.0),   # PLACEHOLDER Z axis limits
+    view_y                = (   5.0,  32.0),   # PLACEHOLDER Y axis limits
 )
 
 # ── I/O ───────────────────────────────────────────────────────────────────────
@@ -70,8 +73,10 @@ def load_trajectories(path):
 def load_voltages(path):
     if not os.path.exists(path):
         return None
-    known = {"time_us", "V_endcap", "V_endcap_R", "V_ring_L", "V_ring_R", "V_ring_brake",
-             "V_RF", "V_RF2", "V_DC2", "V_trap_lens", "V_coll_lens"}
+    known = {"time_us", "V_RF", "V_RF3",
+             "V_endcap_load_U", "V_endcap_load_D",
+             "V_dc_3_TL", "V_dc_3_TR", "V_dc_3_BL", "V_dc_3_BR",
+             "V_endcap_optical_U", "V_endcap_optical_D"}
     cols = {k: [] for k in known}
     headers = None
     with open(path) as f:
@@ -146,24 +151,32 @@ def draw_geometry(ax, triggers=(), trig_colors=()):
     g = GEO
     rod_kw = dict(facecolor=(0.6, 0.6, 0.6), edgecolor="none", alpha=0.30, zorder=1)
 
-    for z0, z1 in [g["rod_z_left"], g["rod_z_right"]]:
+    # Sets 1 + 2 share the same (narrower) rod spacing
+    for z0, z1 in [g["rod_z_set1"], g["rod_z_set2"]]:
         for y0, y1 in [g["rod_y_top"], g["rod_y_bot"]]:
             ax.add_patch(mpatches.Rectangle(
                 (z0, y0), z1 - z0, y1 - y0, **rod_kw))
 
-    # Gap shading
+    # Set 3 (optical Paul trap) uses wider rod spacing
+    z0, z1 = g["rod_z_set3"]
+    for y0, y1 in [g["rod_y_top_3"], g["rod_y_bot_3"]]:
+        ax.add_patch(mpatches.Rectangle(
+            (z0, y0), z1 - z0, y1 - y0,
+            facecolor=(0.55, 0.45, 0.7), edgecolor="none", alpha=0.30, zorder=1))
+
+    # Gate-valve gap
     gz0, gz1 = g["gap_z"]
-    ax.axvspan(gz0, gz1, color="lightyellow", alpha=0.7, zorder=0, label="Gap")
+    ax.axvspan(gz0, gz1, color="lightyellow", alpha=0.7, zorder=0, label="Gate valve gap")
 
-    # End cap and rings as vertical lines
-    ax.axvline(g["endcap_z"],   color="teal",      lw=1.5, ls="--", alpha=0.75, label="End cap L")
-    ax.axvline(g["endcap_R_z"], color="teal",      lw=1.5, ls="-.", alpha=0.75, label="End cap R")
-    ax.axvline(g["ring_L_z"],   color="goldenrod", lw=1.5, ls=":",  alpha=0.85, label="Ring L")
-    ax.axvline(g["ring_R_z"],   color="goldenrod", lw=1.5, ls=(0,(3,1,1,1)), alpha=0.85, label="Ring R")
-
-    # Perp-trap region
-    pz0, pz1 = g["perp_trap_z"]
-    ax.axvspan(pz0, pz1, color="lavender", alpha=0.55, zorder=0, label="Perp trap")
+    # Endcaps as vertical lines
+    ax.axvline(g["endcap_load_U_z"],    color="teal",     lw=1.5, ls="--",
+               alpha=0.75, label="Load endcap U (3)")
+    ax.axvline(g["endcap_load_D_z"],    color="teal",     lw=1.5, ls="-.",
+               alpha=0.75, label="Load endcap D (4)")
+    ax.axvline(g["endcap_optical_U_z"], color="seagreen", lw=1.5, ls="--",
+               alpha=0.85, label="Optical endcap U (9)")
+    ax.axvline(g["endcap_optical_D_z"], color="seagreen", lw=1.5, ls="-.",
+               alpha=0.85, label="Optical endcap D (10)")
 
     for i, trig in enumerate(triggers):
         c = trig_colors[i] if i < len(trig_colors) else "darkorchid"
@@ -226,8 +239,7 @@ def main():
 
     has_volt = volts is not None
     has_rf   = has_volt and len(volts.get("V_RF",  [])) > 0
-    has_rf2  = has_volt and len(volts.get("V_RF2", [])) > 0
-    has_dc2  = has_volt and len(volts.get("V_DC2", [])) > 0
+    has_rf3  = has_volt and len(volts.get("V_RF3", [])) > 0
     if not has_volt:
         print("  No voltage file found — bottom panel omitted.")
 
@@ -287,13 +299,14 @@ def main():
     if has_volt:
         vt = volts["time_us"]
         volt_style = {
-            "V_endcap":      ("teal",       "-",                "End cap L (3)  [DC]"),
-            "V_endcap_R":    ("teal",       "--",               "End cap R (8)  [DC]"),
-            "V_ring_L":      ("goldenrod",  (0,(5,2)),          "Ring L (6)  [DC]"),
-            "V_ring_R":      ("goldenrod",  (0,(5,2,1,2)),      "Ring R (7)  [DC]"),
-            "V_ring_brake":  ("sienna",     (0,(4,1,1,1)),      "Ring brake (13) [DC]"),
-            "V_trap_lens":   ("purple",     (0,(1,1)),          "Trap lens (11) [DC]"),
-            "V_coll_lens":   ("orchid",     (0,(1,1,3,1)),      "Coll lens (12) [DC]"),
+            "V_endcap_load_U":    ("teal",       "-",            "Load endcap U (3)  [DC]"),
+            "V_endcap_load_D":    ("teal",       "--",           "Load endcap D (4)  [DC]"),
+            "V_dc_3_TL":          ("steelblue",  (0,(5,2)),      "Rod 3 TL DC (5)"),
+            "V_dc_3_TR":          ("steelblue",  (0,(5,2,1,2)),  "Rod 3 TR DC (6)"),
+            "V_dc_3_BL":          ("navy",       (0,(5,2)),      "Rod 3 BL DC (7)"),
+            "V_dc_3_BR":          ("navy",       (0,(5,2,1,2)),  "Rod 3 BR DC (8)"),
+            "V_endcap_optical_U": ("seagreen",   "-",            "Optical endcap U (9)  [DC]"),
+            "V_endcap_optical_D": ("seagreen",   "--",           "Optical endcap D (10) [DC]"),
         }
         for key, (color, ls, label) in volt_style.items():
             if key in volts and len(volts[key]):
@@ -302,15 +315,11 @@ def main():
         if has_rf:
             ax_bot.step(vt, volts["V_RF"], where="post",
                         color="crimson", lw=1.5, ls=(0, (3, 1, 1, 1)),
-                        label="RF amplitude V₀")
-        if has_dc2:
-            ax_bot.step(vt, volts["V_DC2"], where="post",
-                        color="mediumseagreen", lw=1.5, ls=(0, (4, 1)),
-                        label="Rod DC bias V_DC2")
-        if has_rf2:
-            ax_bot.step(vt, volts["V_RF2"], where="post",
+                        label="Sets 1+2 RF amplitude V₀")
+        if has_rf3:
+            ax_bot.step(vt, volts["V_RF3"], where="post",
                         color="darkorange", lw=1.5, ls=(0, (3, 1, 1, 1)),
-                        label="RF2 amplitude V₀")
+                        label="Set 3 RF amplitude V₀")
 
         for i, (trig, t_fire) in enumerate(zip(triggers, fire_times)):
             if t_fire is not None:

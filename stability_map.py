@@ -1,34 +1,28 @@
 """
-stability_map.py  –  Interactive bias explorer for the perpendicular-trap electrodes.
+stability_map.py  –  Interactive bias explorer.
+
+NOTE (post-redesign): this script was written for the OLD perpendicular Paul
+trap geometry (axis along X, with lens-holder DC electrodes 11, 12).  In the
+new parallel-axis geometry the lens holders are dielectric (no longer biased),
+and axial confinement comes from real endcaps (electrodes 9, 10).  The
+electrode references below have been updated to load the new PAs, but the
+1-D axial analysis (which sweeps along X) and the visualisation panes need
+to be rewritten to sweep along Z and to reflect the new physics.  Use this
+script as a starting point; it will produce nonsensical X-axis profiles
+until the analysis layer is adapted.
 
 Loads SIMION unit-potential PA files for:
-  9, 10  – perp-trap RF rod pairs (common-mode DC bias V_DC2 when RF is off)
-  11     – trapping lens holder
-  12     – collection lens holder
+  5, 6, 7, 8 – set-3 (optical Paul trap) rod pairs with per-rod DC trim
+  9          – endcap_optical_U
+  10         – endcap_optical_D
 
-The combined potential is:
-  V_total = V_pa9 * dc2 + V_pa10 * dc2 + V_pa11 * v11 + V_pa12 * v12
+Combined potential (proposed for the rewrite):
+  V_total = V_pa5*v_dcTL + V_pa6*v_dcTR + V_pa7*v_dcBL + V_pa8*v_dcBR
+          + V_pa9*v_ecU  + V_pa10*v_ecD
 
-PA9 and PA10 are optional; if absent the rod contribution is omitted with a warning.
-The 1-D profile shows both the full total and the lens-only contribution so you can
-see directly how the rod DC bias deforms the axial well.
-
-Why particles escape toward the collection lens
------------------------------------------------
-stability_map previously only showed the lens-holder fields.  In the actual SIMION
-simulation, paulTrap.lua also sets adj_elect[9] = adj_elect[10] = V_DC2 (70 V by
-default from generate_voltages.py) when RF is off.  Finite-length rods at positive
-DC voltage create axial defocusing: the rod potential peaks at the trap centre along
-X and falls off toward the rod ends, pushing positive particles away from the centre.
-This can eliminate the potential minimum that the lens holders alone would create.
-Set the V_DC2 slider to match your simulation to see the actual combined field.
-
-Usage
------
-    python stability_map.py                         # interactive defaults
-    python stability_map.py --v11 50 --v12 80       # initial lens biases (V)
-    python stability_map.py --dc2 70                # initial rod DC bias (V)
-    python stability_map.py --3d                    # also open PyVista 3-D window
+Usage (legacy CLI, slider semantics still match OLD electrodes 11/12/9-10):
+    python stability_map.py
+    python stability_map.py --3d
     python stability_map.py --3d --screenshot out.png
 """
 
@@ -46,15 +40,18 @@ DX         = 0.5
 HEADER     = 56
 GEM_OFF    = np.array([-25.0, -8.0, -132.0])   # Fusion = i*DX + GEM_OFF
 
-# Perp-trap axis (GEM grid indices; see plot_field.py)
-PERP_IY = 55    # → Fusion Y = 19.50 mm
-PERP_IZ = 816   # → Fusion Z = 276.00 mm
+# PLACEHOLDER: axis indices/coords for the new optical Paul trap region.
+# Update these to match the new geometry once Fusion coords are known.
+PERP_IY = 55    # legacy: → Fusion Y = 19.50 mm
+PERP_IZ = 816   # legacy: → Fusion Z = 276.00 mm
 
-# Lens-holder Fusion X positions (from _ELEC_INFO in plot_field.py)
-TRAP_LENS_X =  4.8   # electrode 11  (x_gem = 29.8)
-COLL_LENS_X = -6.1   # electrode 12  (x_gem = 18.9)
+# PLACEHOLDER: positions of any axial features of interest (e.g. lens centres,
+# trap focus).  The old script used these as reference lines on the X profile;
+# the rewrite should use Z positions for endcaps and lens focii instead.
+TRAP_LENS_X =  4.8
+COLL_LENS_X = -6.1
 
-# Region of interest around the perp-trap (Fusion world, mm)
+# PLACEHOLDER: region of interest around the optical Paul trap (Fusion world, mm)
 ROI_X = (-22.0,  22.0)
 ROI_Y = ( 10.0,  30.0)
 ROI_Z = (258.0, 297.0)
@@ -130,8 +127,9 @@ def load_data():
     Vs, masks = {}, {}
     sl = np.s_[iz0:iz1 + 1, iy0:iy1 + 1, ix0:ix1 + 1]
 
-    # Lens holders (required)
-    for en in (11, 12):
+    # Optical endcaps (required for axial confinement).  These play the role
+    # the lens holders did in the old geometry.
+    for en in (9, 10):
         pa = os.path.join(BASE, f"paulTrap.pa{en}")
         if not os.path.exists(pa):
             sys.exit(f"ERROR: {pa} not found — run SIMION Refine first.")
@@ -140,21 +138,28 @@ def load_data():
         Vs[en]    = V_full[sl]
         masks[en] = eo_full[sl] | et_full[sl]
 
-    elec_mask = masks[11] | masks[12]
+    elec_mask = masks[9] | masks[10]
 
-    # RF rods (optional; gracefully absent before first Refine)
-    for en in (9, 10):
-        pa = os.path.join(BASE, f"paulTrap.pa{en}")
+    # Set-3 rods (optional; gracefully absent before first Refine).
+    # Old script had 2 RF electrodes; we now have 4 independent ones.
+    # Map: old en=9 → new 5 (rod_3_TL),  old en=10 → new 8 (rod_3_BR);
+    # both are on the +RF phase, so a common-mode DC slider still makes sense
+    # for these two as a starting point.  Extend to all four when ready.
+    for new_en in (5, 8):
+        pa = os.path.join(BASE, f"paulTrap.pa{new_en}")
         if os.path.exists(pa):
-            print(f"\nReading paulTrap.pa{en} …")
+            print(f"\nReading paulTrap.pa{new_en} …")
             V_full, eo_full, et_full = read_pa(pa)
-            Vs[en] = V_full[sl]
+            Vs[new_en] = V_full[sl]
         else:
-            print(f"\n  [skip] paulTrap.pa{en} not found — rod contribution will be zero")
-            Vs[en] = None
+            print(f"\n  [skip] paulTrap.pa{new_en} not found — rod contribution will be zero")
+            Vs[new_en] = None
 
-    has_rods = (Vs[9] is not None and Vs[10] is not None)
-    return xs, ys, zs, sub_iy, sub_iz, Vs[9], Vs[10], Vs[11], Vs[12], elec_mask, has_rods
+    has_rods = (Vs[5] is not None and Vs[8] is not None)
+    # Return signature preserved (V9_rod, V10_rod, V11_endcap, V12_endcap):
+    # legacy callers still pass them as "rods" and "lens holders" but the
+    # contents are now set-3 rods and optical endcaps respectively.
+    return xs, ys, zs, sub_iy, sub_iz, Vs[5], Vs[8], Vs[9], Vs[10], elec_mask, has_rods
 
 
 # ── Stability analysis ────────────────────────────────────────────────────────
@@ -413,14 +418,15 @@ def show_3d(xs, ys, zs, V9, V10, V11, V12, elec_mask, has_rods,
         pl.add_mesh(glyphs, color="darkorange", opacity=0.8)
 
     for fname, color, opacity in [
-        ("trapping_lens_holder.stl",   "gold",      0.70),
-        ("collection_lens_holder.stl", "orchid",    0.70),
-        ("trap_rod_TL.stl",            "lightblue", 0.30),
-        ("trap_rod_BR.stl",            "lightblue", 0.30),
-        ("trap_rod_TR.stl",            "lightblue", 0.30),
-        ("trap_rod_BL.stl",            "lightblue", 0.30),
-        ("trapping_lens.stl",          "lightcyan", 0.25),
-        ("collection_lens.stl",        "lightcyan", 0.25),
+        ("endcap_optical_U.stl", "gold",      0.70),
+        ("endcap_optical_D.stl", "orchid",    0.70),
+        ("rod_3_TL.stl",         "lightblue", 0.30),
+        ("rod_3_TR.stl",         "lightblue", 0.30),
+        ("rod_3_BL.stl",         "lightblue", 0.30),
+        ("rod_3_BR.stl",         "lightblue", 0.30),
+        ("trapping_lens.stl",    "lightcyan", 0.25),
+        ("collection_lens.stl",  "lightcyan", 0.25),
+        ("lens_holder.stl",      "wheat",     0.25),
     ]:
         fpath = os.path.join(BASE, fname)
         if os.path.exists(fpath):

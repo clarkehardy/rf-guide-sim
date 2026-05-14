@@ -1,125 +1,118 @@
 -- paulTrap.gem
--- Linear Paul trap RF guide + perpendicular Paul trap for particle retrapping.
+-- Linear Paul trap RF guide with parallel-axis optical Paul trap at the
+-- downstream end.  All rods are along Z; the optical Paul trap is wider
+-- than the loading trap / RF guide and surrounds the optical-trap lenses.
 --
--- Main trap (axis along Z):
---   1 = rod pair 1, left  (+RF): top-left + bottom-right left rods
---   2 = rod pair 2, left  (-RF): top-right + bottom-left left rods
---   3 = left end cap   (DC, V_endcap in CSV)
---   4 = rod pair 1, right (+RF): top-left + bottom-right right rods
---   5 = rod pair 2, right (-RF): top-right + bottom-left right rods
---   6 = ring electrode, left  (DC, V_ring_L in CSV)
---   7 = ring electrode, right (DC, V_ring_R in CSV)
---   8 = right end cap  (DC, V_endcap_R in CSV)
---  13 = ring_brake             (DC, V_ring_brake in CSV)
+-- Labelling convention (looking down the RF guide axis):
+--   L = -x, R = +x, T = +y, B = -y, U = +z (upstream), D = -z (downstream)
 --
--- Perpendicular trap (axis along X):
---   9  = trap rod pair 1 (+RF2): trap_rod_TL + trap_rod_BR
---   10 = trap rod pair 2 (-RF2): trap_rod_TR + trap_rod_BL
---   11 = trapping_lens_holder  (DC, V_trap_lens in CSV)
---   12 = collection_lens_holder (DC, V_coll_lens in CSV)
---   14 = trapping_lens   (glass dielectric — see PLACEHOLDER note)
---   15 = collection_lens (glass dielectric — see PLACEHOLDER note)
+-- 10 SIMION electrodes:
+--   1  = sets 1 + 2, +RF phase:  rod_1_TL, rod_1_BR, rod_2_TL, rod_2_BR
+--   2  = sets 1 + 2, -RF phase:  rod_1_TR, rod_1_BL, rod_2_TR, rod_2_BL
+--   3  = endcap_load_U          (DC, V_endcap_load_U)
+--   4  = endcap_load_D          (DC, V_endcap_load_D)
+--   5  = rod_3_TL               (RF3 + V_dc_3_TL)
+--   6  = rod_3_TR               (RF3 + V_dc_3_TR)
+--   7  = rod_3_BL               (RF3 + V_dc_3_BL)
+--   8  = rod_3_BR               (RF3 + V_dc_3_BR)
+--   9  = endcap_optical_U       (DC, V_endcap_optical_U; triggered)
+--   10 = endcap_optical_D       (DC, V_endcap_optical_D; triggered)
 --
--- Coordinate transform:
---   GEM x = Fusion X + 25.0
---   GEM y = Fusion Y +  8.0
---   GEM z = Fusion Z + 132.0
---   PA extent (Fusion): X [-25, 40] mm  Y [-8, 37] mm  Z [-132, 295] mm
---   Grid spacing: 0.5 mm (fast testing) — change dx to 0.15 mm for production
+-- Dielectric volumes (NOT defined here; see generate_dielectric_pa.py):
+--   trapping_lens.stl, collection_lens.stl, lens_holder.stl
+--
+-- Coordinate transform (PLACEHOLDER):
+--   GEM x = Fusion X + tx     (set tx = -min(Fusion X) of new layout)
+--   GEM y = Fusion Y + ty
+--   GEM z = Fusion Z + tz
+--   PA extent (Fusion):   X [..., ...]  Y [..., ...]  Z [..., ...]
+--   Grid spacing: 0.5 mm for fast testing — change dx to 0.15 mm for production.
 
 local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\"
 
 local EPSILON_GLASS = 3.0
 
--- Note: surface='fractional' (sub-grid surface enhancement) is incompatible
--- with SIMION 8.2's dielectric solver and must be omitted.  For higher
--- accuracy near electrode surfaces without fractional mode, reduce dx.
+-- PLACEHOLDER: update pa_define dimensions to enclose the new geometry with
+-- ~5 mm clearance on every side.  surface='fractional' must be omitted when
+-- using refine_with_dielectric.lua (incompatible with SIMION 8.2 dielectric
+-- solver); reduce dx for higher surface accuracy instead.
 pa_define{65*mm, 45*mm, 427*mm, 'planar', dx=0.5,
           filename="paulTrap.pa0", surface="fractional"}
 
+-- PLACEHOLDER: locate(tx, ty, tz) must match the offsets above and the
+-- gem_offset entry in trap_config.lua.
 locate(25, 8, 132) {
--- All seed points are in Fusion world coordinates (mm).
 
-  -- ── Main Paul trap (axis along Z) ─────────────────────────────────────────
+  -- ── Sets 1 + 2 RF rods ───────────────────────────────────────────────────
+  -- Sets 1 and 2 share the same rod spacing and are wired in parallel.
+  -- +RF phase = TL + BR of each set (electrode 1).
+  -- -RF phase = TR + BL of each set (electrode 2).
+  -- PLACEHOLDER: replace every seed point below with the actual centroid of
+  -- the corresponding STL in Fusion world coordinates.
 
-  e(1) {  -- rod pair 1, LEFT, +RF (top-left = P1_L1, bottom-right = P1_L2)
-    stl(D.."rod_P1_L1.stl",  -2.1082, 21.1582, -20.6470)
-    stl(D.."rod_P1_L2.stl",   2.1082, 16.9672, -20.6470)
+  e(1) {
+    stl(D.."rod_1_TL.stl",  0.0, 0.0, 0.0)  -- set 1, top-left
+    stl(D.."rod_1_BR.stl",  0.0, 0.0, 0.0)  -- set 1, bottom-right
+    stl(D.."rod_2_TL.stl",  0.0, 0.0, 0.0)  -- set 2, top-left
+    stl(D.."rod_2_BR.stl",  0.0, 0.0, 0.0)  -- set 2, bottom-right
   }
 
-  e(2) {  -- rod pair 2, LEFT, -RF (top-right = P2_L1, bottom-left = P2_L2)
-    stl(D.."rod_P2_L1.stl",   2.1082, 21.1582, -20.6470)
-    stl(D.."rod_P2_L2.stl",  -2.1082, 16.9672, -20.6470)
+  e(2) {
+    stl(D.."rod_1_TR.stl",  0.0, 0.0, 0.0)  -- set 1, top-right
+    stl(D.."rod_1_BL.stl",  0.0, 0.0, 0.0)  -- set 1, bottom-left
+    stl(D.."rod_2_TR.stl",  0.0, 0.0, 0.0)  -- set 2, top-right
+    stl(D.."rod_2_BL.stl",  0.0, 0.0, 0.0)  -- set 2, bottom-left
   }
 
-  e(3) {  -- left end cap
-    stl(D.."endcap_L.stl",    7.00, 19.06, -114.995)
+  -- ── Load Paul trap endcaps ────────────────────────────────────────────────
+
+  e(3) {
+    stl(D.."endcap_load_U.stl",  0.0, 0.0, 0.0)
   }
 
-  e(4) {  -- rod pair 1, RIGHT, +RF (top-left = P1_R1, bottom-right = P1_R2)
-    stl(D.."rod_P1_R1.stl",  -2.1082, 21.1582, 169.2021)
-    stl(D.."rod_P1_R2.stl",   2.1082, 16.9672, 169.2021)
+  e(4) {
+    stl(D.."endcap_load_D.stl",  0.0, 0.0, 0.0)
   }
 
-  e(5) {  -- rod pair 2, RIGHT, -RF (top-right = P2_R1, bottom-left = P2_R2)
-    stl(D.."rod_P2_R1.stl",   2.1082, 21.1582, 169.2021)
-    stl(D.."rod_P2_R2.stl",  -2.1082, 16.9672, 169.2021)
+  -- ── Set 3 rods (optical Paul trap, 4 independent electrodes) ──────────────
+
+  e(5) {
+    stl(D.."rod_3_TL.stl",  0.0, 0.0, 0.0)
   }
 
-  e(6) {  -- ring electrode, left (DC, near gap left edge)
-    stl(D.."ring_L.stl",  10.0, 19.06, 67.386)
+  e(6) {
+    stl(D.."rod_3_TR.stl",  0.0, 0.0, 0.0)
   }
 
-  e(7) {  -- ring electrode, right (DC, near gap right edge)
-    stl(D.."ring_R.stl",  10.0, 19.06, 110.376)
+  e(7) {
+    stl(D.."rod_3_BL.stl",  0.0, 0.0, 0.0)
   }
 
-  e(8) {  -- right end cap
-    stl(D.."endcap_R.stl",  7.00, 19.06, -81.245)
+  e(8) {
+    stl(D.."rod_3_BR.stl",  0.0, 0.0, 0.0)
   }
 
-  -- ── Perpendicular Paul trap (axis along X) ─────────────────────────────────
-  -- Quadrupole rods paired diagonally in the Y-Z plane.
-  -- Pair 1 (+RF2): top-left-Y/left-Z + bottom-right-Y/right-Z (TL + BR)
-  -- Pair 2 (-RF2): top-right-Y/right-Z + bottom-left-Y/left-Z (TR + BL)
+  -- ── Optical Paul trap endcaps ─────────────────────────────────────────────
 
-  e(9) {  -- trap rod pair 1, +RF2: TL + BR
-    stl(D.."trap_rod_TL.stl",  15.396, 25.914, 269.656)
-    stl(D.."trap_rod_BR.stl",  15.396, 13.214, 282.356)
+  e(9) {
+    stl(D.."endcap_optical_U.stl",  0.0, 0.0, 0.0)
   }
 
-  e(10) {  -- trap rod pair 2, -RF2: TR + BL
-    stl(D.."trap_rod_TR.stl",  15.396, 25.914, 282.356)
-    stl(D.."trap_rod_BL.stl",  15.396, 13.214, 269.656)
+  e(10) {
+    stl(D.."endcap_optical_D.stl",  0.0, 0.0, 0.0)
   }
 
-  e(11) {  -- trapping_lens_holder: DC electrode (V_trap_lens in CSV)
-    stl(D.."trapping_lens_holder.stl",  4.830, 13.913, 275.994)
-  }
-
-  e(12) {  -- collection_lens_holder: DC electrode (V_coll_lens in CSV)
-    stl(D.."collection_lens_holder.stl",  -6.073, 15.127, 275.969)
-  }
-
-  -- ── Braking ring electrode ────────────────────────────────────────────────────
-  -- PLACEHOLDER: Replace the seed point below with the centroid of ring_brake.stl
-  -- in Fusion world coordinates.  Use the same X ≈ 10 mm pattern as ring_L/ring_R
-  -- (solid wall material, not the aperture centre).
-  e(13) {
-    stl(D.."ring_brake.stl",  10.0, 19.06, 244.67)
-  }
-
-  -- ── Dielectric lenses ───────────────────────────────────────────────────────
-  -- The glass lenses (trapping_lens.stl, collection_lens.stl) are NOT defined
+  -- ── Dielectric volumes ────────────────────────────────────────────────────
+  -- The trap lens, collection lens, and uniform lens holder are NOT defined
   -- as electrodes here.  Per SIMION 8.2 dielectric documentation, the electric
-  -- PA must treat dielectric material as non-electrode (free space); the lens
+  -- PA must treat dielectric material as non-electrode (free space); the
   -- geometry is encoded in a separate dielectric PA file instead.
   --
   -- Workflow:
-  --   1. Refine this GEM normally (GUI or pa:refine) to create pa0–pa13.
+  --   1. Refine this GEM normally to create pa0–pa10.
   --   2. Run generate_dielectric_pa.py to create paulTrap-dielectric.pa
-  --      (ε_r = EPSILON_GLASS inside lens volumes, 1.0 elsewhere).
-  --   3. Run refine_with_dielectric.lua to re-refine pa1–pa13 with the
+  --      (ε_r = EPSILON_GLASS inside the three dielectric meshes, 1.0 elsewhere).
+  --   3. Run refine_with_dielectric.lua to re-refine pa1–pa10 with the
   --      dielectric PA.  After step 3, fast-adjust works as normal.
   --
   -- EPSILON_GLASS is defined at the top of this file; change it there and
