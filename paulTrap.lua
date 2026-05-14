@@ -28,13 +28,20 @@ adjustable voltage_file_number = 1
 adjustable run_number          = 1
 
 -- ── State populated from trap_config.lua in initialize_run() ─────────────────
-local gamma_drag     = 0.0              -- Epstein drag rate [µs⁻¹]
+local gamma_drag     = 0.0              -- Epstein drag rate at baseline pressure [µs⁻¹]
+local _gamma_per_pa  = 0.0              -- drag rate per Pa of gas pressure [µs⁻¹ Pa⁻¹]
+local _P_baseline    = 0.0              -- baseline gas pressure [Pa]
 local _drag_scale    = 1.0
 local _v_stop        = 1e-5             -- [mm/µs]
 local _record_stride = 20
 local _gem_off       = {x=25.0, y=8.0, z=132.0}  -- GEM → Fusion offsets [mm]
 local _triggers           = {}         -- {z_mm, electrodes={...}} list
 local _trig_for_electrode = {}         -- electrode_num → trigger index, built in initialize_run
+-- Pressure-ramp config (set if cfg.pressure_ramp present)
+local _ramp_enabled       = false
+local _ramp_trigger_idx   = 1           -- which trigger fires the ramp
+local _ramp_P_final       = 0.0         -- target pressure after ramp [Pa]
+local _ramp_duration_us   = 0.0         -- linear ramp duration [µs]
 -- Per-ion trigger state (keyed by ion_number so simultaneous ions don't share state)
 local _ion_trig_fired     = {}         -- [ion_number][trig_idx] = true
 local _ion_trig_fire_time = {}         -- [ion_number][trig_idx] = TOF at firing
@@ -89,6 +96,20 @@ local function _trig_t(en, t)
   return t - _ion_trig_fire_time[ion_number][i]
 end
 
+-- Returns the current gas pressure for the current ion, in Pa.
+-- Before the ramp trigger fires (or if no ramp configured) → _P_baseline.
+-- During ramp → linear interpolation baseline → P_final over duration.
+-- After ramp → _ramp_P_final.
+local function _current_pressure()
+  if not _ramp_enabled then return _P_baseline end
+  local fired = _ion_trig_fired[ion_number]
+  if not fired or not fired[_ramp_trigger_idx] then return _P_baseline end
+  local t_since = ion_time_of_flight - _ion_trig_fire_time[ion_number][_ramp_trigger_idx]
+  if t_since <= 0 then return _P_baseline end
+  if _ramp_duration_us <= 0 or t_since >= _ramp_duration_us then return _ramp_P_final end
+  return _P_baseline + (t_since / _ramp_duration_us) * (_ramp_P_final - _P_baseline)
+end
+
 -- ── Trajectory file ───────────────────────────────────────────────────────────
 local _traj_file = nil
 
@@ -130,10 +151,13 @@ function segment.initialize_run()
   end
 
   -- ── Compute Epstein drag rate ────────────────────────────────────────────
+  -- γ = β/m = [(8π/3) r² P / c̄] / m  (in s⁻¹).  Linear in P, so precompute
+  -- gamma_per_pa = γ / P; the actual γ at each timestep is gamma_per_pa * P_now.
   local c_bar = math.sqrt(8 * kB * T_gas / (math.pi * M_gas * amu))
   local m_p   = (4/3) * math.pi * r_p^3 * rho_p
-  local beta  = (8 * math.pi / 3) * r_p^2 * P_gas / c_bar
-  gamma_drag  = beta / m_p * 1e-6   -- convert s⁻¹ → µs⁻¹
+  _gamma_per_pa = (8 * math.pi / 3) * r_p^2 / (m_p * c_bar) * 1e-6  -- µs⁻¹ Pa⁻¹
+  _P_baseline   = P_gas
+  gamma_drag    = _gamma_per_pa * P_gas   -- baseline rate for logging
 
   simion.print(string.format(
     "Config:  P=%.3f Pa,  T=%.0f K,  M_gas=%.0f amu\n",
@@ -142,8 +166,22 @@ function segment.initialize_run()
     "         r_p=%.0f nm,  rho_p=%.0f kg/m^3,  m_p=%.3e kg\n",
     r_p*1e9, rho_p, m_p))
   simion.print(string.format(
-    "         gamma=%.4e us^-1,  drag_scale=%.1f\n",
+    "         gamma=%.4e us^-1 (at baseline P),  drag_scale=%.1f\n",
     gamma_drag, _drag_scale))
+
+  -- ── Pressure ramp (triggered) ────────────────────────────────────────────
+  local pr = cfg.pressure_ramp
+  if pr then
+    _ramp_enabled     = true
+    _ramp_trigger_idx = pr.trigger     or 1
+    _ramp_P_final     = pr.P_final_pa  or P_gas
+    _ramp_duration_us = pr.duration_us or 0
+    simion.print(string.format(
+      "Pressure ramp: on trigger %d, P=%.3f Pa --> %.3f Pa over %.0f us\n",
+      _ramp_trigger_idx, _P_baseline, _ramp_P_final, _ramp_duration_us))
+  else
+    _ramp_enabled = false
+  end
 
   if #_triggers > 0 then
     for i, trig in ipairs(_triggers) do
@@ -373,7 +411,9 @@ end
 function segment.accel_adjust()
   if ion_time_step == 0 then return end
 
-  local g     = _drag_scale * gamma_drag
+  -- Drag rate at the current per-ion gas pressure (pressure may be ramping
+  -- after a trigger fire; falls back to baseline when no ramp is configured).
+  local g     = _drag_scale * _gamma_per_pa * _current_pressure()
   local tterm = ion_time_step * g
 
   if tterm < 1e-12 then

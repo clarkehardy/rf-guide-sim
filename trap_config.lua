@@ -5,9 +5,23 @@
 return {
 
   -- ── Gas ──────────────────────────────────────────────────────────────────
-  pressure_pa        = 0.1,    -- Pa  (100 Pa = 1 mbar)
+  pressure_pa        = 0.1,    -- baseline pressure [Pa]  (100 Pa = 1 mbar)
   temperature_k      = 293,    -- K
   gas_molar_mass_amu = 28.0,   -- amu  (28 = N2)
+
+  -- ── Pressure ramp (optional, per-ion, fired by a trigger) ────────────────
+  -- Models opening a solenoid valve when the particle reaches a z threshold:
+  -- pressure ramps linearly from pressure_pa to P_final_pa over duration_us,
+  -- starting at the moment the named trigger fires for that ion.  Before the
+  -- trigger fires the pressure stays at pressure_pa.
+  --
+  -- Comment out this block (or omit `pressure_ramp` entirely) to keep
+  -- pressure constant at pressure_pa for the whole simulation.
+  pressure_ramp = {
+    trigger     = 1,        -- index into the `triggers` list below
+    P_final_pa  = 100.0,    -- target pressure [Pa]  (100 Pa = 1 mbar)
+    duration_us = 5e4,      -- linear ramp duration [µs]
+  },
 
   -- ── Particle ─────────────────────────────────────────────────────────────
   particle_radius_m     = 83e-9,  -- m  (166 nm diameter silica sphere)
@@ -36,7 +50,7 @@ return {
   -- the new geometry travel in -Z, so threshold should fire as the particle
   -- decelerates into the optical-trap volume.
   triggers = {
-    { z_mm = 0.0, electrodes = {9, 10} },  -- PLACEHOLDER z_mm
+    { z_mm = 272.0, electrodes = {9, 10} },  -- PLACEHOLDER z_mm
   },
 
   -- ── Particle definitions ──────────────────────────────────────────────────
@@ -54,7 +68,7 @@ return {
     starts = {
       -- PLACEHOLDER: set start position to inside the loading Paul trap (sets 1+2),
       -- between endcap_load_U (+z) and endcap_load_D (-z).  Coordinates are Fusion world (mm).
-      { x_mm = 0, y_mm = 0, z_mm = 0, ke_ev = 0,
+      { x_mm = 0, y_mm = 19, z_mm = -79.5, ke_ev = 0, -- -79.5
         sigma_mm = { x = 0, y = 0, z = 0.1 } },
     },
   },
