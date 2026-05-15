@@ -49,16 +49,16 @@ _args = ap.parse_args()
 OUT_NUMBER = _args.out
 
 # ── RF parameters ─────────────────────────────────────────────────────────────
-f_RF  = 5.5e3          # Hz — carrier frequency, sets 1 + 2 (loading + RF guide)
+f_RF  = 2e3          # Hz — carrier frequency, sets 1 + 2 (loading + RF guide)
 
 # PLACEHOLDER: Set f_RF3 to the correct RF frequency for the optical Paul trap (set 3).
 # Stability parameter q ≈ 4 Q V_rf / (m ω² r_0²) — choose with the known r_0 and a
 # target q < 0.908.
-f_RF3 = 1e6            # Hz — PLACEHOLDER
+f_RF3 = 2e3            # Hz — PLACEHOLDER
 
 # ── Time base ─────────────────────────────────────────────────────────────────
 max_time = 2e5
-times    = np.linspace(0, max_time, 1000)
+times    = np.linspace(0, max_time, 100_000)
 
 # ── Sets 1 + 2 RF amplitude envelope ──────────────────────────────────────────
 # V_RF sets the zero-to-peak amplitude of the loading + RF guide quadrupole.
@@ -66,15 +66,16 @@ times    = np.linspace(0, max_time, 1000)
 #   V_RF = 100 * np.ones_like(times)
 #   ramp_mask = times > 1e5
 #   V_RF[ramp_mask] = 100 * np.exp(-(times[ramp_mask] - 1e5) / 3e4)
-V_RF = 100 * np.ones_like(times)
+V_RF = 10 * np.ones_like(times)
 
 # ── Load Paul trap endcaps ────────────────────────────────────────────────────
 V_endcap_load_U = np.zeros_like(times)
-V_endcap_load_D = np.zeros_like(times)
+V_endcap_load_D = 10 * np.ones_like(times)
+V_endcap_load_D[times <= 5] = -10
 
 # ── Set 3 (optical Paul trap) ─────────────────────────────────────────────────
 # PLACEHOLDER: set V_RF3 to the trapping amplitude for the wider Paul trap.
-V_RF3 = 0 * np.ones_like(times)
+V_RF3 = 300 * np.ones_like(times)
 
 # Per-rod DC trims (positive shifts equilibrium away from that rod).
 # Apply equal-and-opposite trims on opposite-side rods to shift equilibrium
@@ -85,9 +86,21 @@ V_dc_3_BL = np.zeros_like(times)
 V_dc_3_BR = np.zeros_like(times)
 
 # ── Optical Paul trap endcaps (gated by trigger in trap_config.lua) ───────────
-# These follow the schedule from t = 0 of the trigger firing, not absolute t.
+# Fallback: used only if the post-trigger schedule below is absent from the CSV.
 V_endcap_optical_U = np.zeros_like(times)
 V_endcap_optical_D = np.zeros_like(times)
+
+# ── Post-trigger schedule (electrodes 9 and 10) ───────────────────────────────
+# Independent, finer time axis.  Time is measured from trigger-fire, not
+# absolute simulation time.  paulTrap.lua prefers these columns over the
+# V_endcap_optical_U/D fallback columns above.
+max_time_trig = 5000          # µs — total duration of the post-trigger schedule
+dt_trig       = 0.5           # µs — time step (finer than the main schedule)
+times_trig    = np.arange(0, max_time_trig + dt_trig / 2, dt_trig)
+
+# PLACEHOLDER: define pulse shape here.
+V_endcap_optical_U_trig = 20 * np.ones_like(times_trig)
+V_endcap_optical_D_trig = 20 * np.ones_like(times_trig)
 
 # ── Assemble schedule ─────────────────────────────────────────────────────────
 COLUMNS = [
@@ -103,20 +116,34 @@ COLUMNS = [
     ("V_endcap_optical_U", V_endcap_optical_U),
     ("V_endcap_optical_D", V_endcap_optical_D),
 ]
+TRIG_COLUMNS = [
+    ("time_trig_us",            times_trig),
+    ("V_endcap_optical_U_trig", V_endcap_optical_U_trig),
+    ("V_endcap_optical_D_trig", V_endcap_optical_D_trig),
+]
 
 # ── Write CSV ─────────────────────────────────────────────────────────────────
-out_path = os.path.join(BASE, f"voltages_{OUT_NUMBER}.csv")
-header   = ",".join(name for name, _ in COLUMNS)
-data     = np.vstack([arr for _, arr in COLUMNS]).T
+out_path  = os.path.join(BASE, f"voltages_{OUT_NUMBER}.csv")
+header    = ",".join(name for name, _ in COLUMNS + TRIG_COLUMNS)
+data      = np.vstack([arr for _, arr in COLUMNS]).T
+trig_data = np.vstack([arr for _, arr in TRIG_COLUMNS]).T
+n_main    = len(COLUMNS)
+n_trig    = len(TRIG_COLUMNS)
 
 with open(out_path, "w") as f:
     f.write(f"# f_RF_Hz={f_RF}\n")
     f.write(f"# f_RF3_Hz={f_RF3}\n")
     f.write(header + "\n")
+    # Main schedule rows: n_trig trailing empty fields
     for row in data:
-        f.write(f"{row[0]:.2f}," + ",".join(f"{v:.6f}" for v in row[1:]) + "\n")
+        fields = [f"{row[0]:.2f}"] + [f"{v:.6f}" for v in row[1:]] + [""] * n_trig
+        f.write(",".join(fields) + "\n")
+    # Post-trigger rows: n_main leading empty fields
+    for row in trig_data:
+        fields = [""] * n_main + [f"{row[0]:.4f}"] + [f"{v:.6f}" for v in row[1:]]
+        f.write(",".join(fields) + "\n")
 
-print(f"Written {len(data)} rows → {out_path}")
+print(f"Written {len(data)} main rows + {len(trig_data)} trigger rows → {out_path}")
 
 # ── Preview plot ──────────────────────────────────────────────────────────────
 try:
@@ -126,7 +153,8 @@ try:
 
     t = times
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 9))
+    ax2.sharex(ax1)   # main schedule panels share x; trigger panel is independent
 
     ax1.step(t, V_RF,            where="post", color="crimson",   lw=1.5,
              label=f"V_RF (sets 1+2,  f={f_RF:.0f} Hz)")
@@ -139,25 +167,27 @@ try:
     ax1.legend(fontsize=8, ncol=3)
     ax1.grid(True, alpha=0.3)
 
-    ax2.step(t, V_RF3,              where="post", color="darkorange", lw=1.5,
+    ax2.step(t, V_RF3,     where="post", color="darkorange", lw=1.5,
              label=f"V_RF3 (set 3,  f={f_RF3:.0f} Hz)")
-    ax2.step(t, V_dc_3_TL,          where="post", color="steelblue",  lw=1.2,
-             label="V_dc_3_TL (5)")
-    ax2.step(t, V_dc_3_TR,          where="post", color="steelblue",  lw=1.2, ls="--",
-             label="V_dc_3_TR (6)")
-    ax2.step(t, V_dc_3_BL,          where="post", color="navy",       lw=1.2,
-             label="V_dc_3_BL (7)")
-    ax2.step(t, V_dc_3_BR,          where="post", color="navy",       lw=1.2, ls="--",
-             label="V_dc_3_BR (8)")
-    ax2.step(t, V_endcap_optical_U, where="post", color="seagreen",   lw=1.5,
-             label="V_endcap_optical_U (9)")
-    ax2.step(t, V_endcap_optical_D, where="post", color="seagreen",   lw=1.5, ls="--",
-             label="V_endcap_optical_D (10)")
-    ax2.set_xlabel("Time (µs)")
+    ax2.step(t, V_dc_3_TL, where="post", color="steelblue",  lw=1.2, label="V_dc_3_TL (5)")
+    ax2.step(t, V_dc_3_TR, where="post", color="steelblue",  lw=1.2, ls="--", label="V_dc_3_TR (6)")
+    ax2.step(t, V_dc_3_BL, where="post", color="navy",       lw=1.2, label="V_dc_3_BL (7)")
+    ax2.step(t, V_dc_3_BR, where="post", color="navy",       lw=1.2, ls="--", label="V_dc_3_BR (8)")
+    ax2.set_xlabel("Simulation time (µs)")
     ax2.set_ylabel("Voltage (V)")
-    ax2.set_title("Optical Paul trap (set 3 + optical endcaps)")
+    ax2.set_title("Optical Paul trap (set 3 rods)")
     ax2.legend(fontsize=8, ncol=4)
     ax2.grid(True, alpha=0.3)
+
+    ax3.step(times_trig, V_endcap_optical_U_trig, where="post", color="seagreen", lw=1.5,
+             label="V_endcap_optical_U_trig (9)")
+    ax3.step(times_trig, V_endcap_optical_D_trig, where="post", color="seagreen", lw=1.5, ls="--",
+             label="V_endcap_optical_D_trig (10)")
+    ax3.set_xlabel("Time since trigger (µs)")
+    ax3.set_ylabel("Voltage (V)")
+    ax3.set_title(f"Post-trigger pulse — electrodes 9, 10  ({dt_trig} µs steps, {max_time_trig} µs total)")
+    ax3.legend(fontsize=8)
+    ax3.grid(True, alpha=0.3)
 
     fig.tight_layout()
     plt.show()

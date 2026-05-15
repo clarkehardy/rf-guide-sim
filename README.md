@@ -233,7 +233,7 @@ Edit `generate_voltages.py` to define the time-varying voltages for all 10 elect
 ~/.venvs/nano/bin/python3 generate_voltages.py
 ```
 
-This produces `voltages_1.csv` (or `voltages_N.csv` — pass `--out N`) and opens a preview plot showing all channels. The CSV format is:
+This produces `voltages_1.csv` (or `voltages_N.csv` — pass `--out N`) and opens a preview plot showing all channels. The CSV contains two interleaved row types sharing one header:
 
 ```
 # f_RF_Hz=<value>
@@ -241,10 +241,15 @@ This produces `voltages_1.csv` (or `voltages_N.csv` — pass `--out N`) and open
 time_us, V_RF, V_RF3,
          V_endcap_load_U, V_endcap_load_D,
          V_dc_3_TL, V_dc_3_TR, V_dc_3_BL, V_dc_3_BR,
-         V_endcap_optical_U, V_endcap_optical_D
+         V_endcap_optical_U, V_endcap_optical_D,
+         time_trig_us, V_endcap_optical_U_trig, V_endcap_optical_D_trig
 ```
 
-SIMION interpolates voltages linearly between rows. For a sharp step, place two rows at the same time (or 0.1 µs apart).
+**Main-schedule rows** (`time_us` present, `time_trig_us` empty): drive all 10 electrodes on the coarse simulation time axis. The `V_endcap_optical_U/D` columns are a fallback; if the trig columns are loaded they take priority.
+
+**Post-trigger rows** (`time_trig_us` present, `time_us` empty): define what electrodes 9 and 10 do after the trigger fires, as a function of *time since trigger fire*. Use a finer time step here (`dt_trig` in `generate_voltages.py`) to capture short pulses accurately. Once the schedule runs past its last row it clamps to the final value.
+
+SIMION interpolates voltages linearly between rows within each time axis. For a sharp step, place two rows at the same time (or 0.1 µs apart).
 
 ### Key parameters to set
 

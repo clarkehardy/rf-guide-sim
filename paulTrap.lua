@@ -64,8 +64,12 @@ local _v_dc_TL     = {}   -- electrode 5 DC trim (rod_3_TL)
 local _v_dc_TR     = {}   -- electrode 6 DC trim (rod_3_TR)
 local _v_dc_BL     = {}   -- electrode 7 DC trim (rod_3_BL)
 local _v_dc_BR     = {}   -- electrode 8 DC trim (rod_3_BR)
-local _v_ec_opt_U  = {}   -- electrode 9
-local _v_ec_opt_D  = {}   -- electrode 10
+local _v_ec_opt_U  = {}   -- electrode 9  (main schedule, coarse time axis)
+local _v_ec_opt_D  = {}   -- electrode 10 (main schedule, coarse time axis)
+-- Post-trigger fine-resolution schedule (independent time axis, time since trigger)
+local _vt_trig         = {}
+local _v_ec_opt_U_trig = {}   -- electrode 9  post-trigger pulse
+local _v_ec_opt_D_trig = {}   -- electrode 10 post-trigger pulse
 
 local function _interp(t_tbl, v_tbl, t)
   if #t_tbl == 0 then return 0.0 end
@@ -78,6 +82,18 @@ local function _interp(t_tbl, v_tbl, t)
   end
   local frac = (t - t_tbl[lo]) / (t_tbl[hi] - t_tbl[lo])
   return v_tbl[lo] + frac * (v_tbl[hi] - v_tbl[lo])
+end
+
+-- CSV tokenizer that correctly handles empty fields (consecutive commas).
+-- tonumber("") returns nil, which is falsy, so callers treat nil as "not present".
+local function _split_csv(line)
+  local vals = {}
+  local i = 1
+  for field in (line .. ","):gmatch("([^,\r\n]*),") do
+    vals[i] = tonumber(field)
+    i = i + 1
+  end
+  return vals
 end
 
 -- Standard-normal sample via Box-Muller, using SIMION's built-in rand().
@@ -224,6 +240,9 @@ function segment.initialize_run()
   _v_dc_BR     = {}
   _v_ec_opt_U  = {}
   _v_ec_opt_D  = {}
+  _vt_trig         = {}
+  _v_ec_opt_U_trig = {}
+  _v_ec_opt_D_trig = {}
 
   do
     local vpath = D .. "voltages_" .. math.floor(voltage_file_number) .. ".csv"
@@ -267,18 +286,25 @@ function segment.initialize_run()
         ["V_endcap_optical_U"] = _v_ec_opt_U,
         ["V_endcap_optical_D"] = _v_ec_opt_D,
       }
+      local trig_dest = {
+        ["V_endcap_optical_U_trig"] = _v_ec_opt_U_trig,
+        ["V_endcap_optical_D_trig"] = _v_ec_opt_D_trig,
+      }
 
+      local ti  = col_idx["time_us"]
+      local tti = col_idx["time_trig_us"]
       for line in vf:lines() do
-        local vals = {}
-        local j = 0
-        for v in line:gmatch("[^,\r\n]+") do
-          j = j + 1
-          vals[j] = tonumber(v)
-        end
-        local ti = col_idx["time_us"]
+        local vals = _split_csv(line)
         if ti and vals[ti] then
           table.insert(_vt, vals[ti])
           for col, tbl in pairs(dest) do
+            local idx = col_idx[col]
+            if idx and vals[idx] then table.insert(tbl, vals[idx]) end
+          end
+        end
+        if tti and vals[tti] then
+          table.insert(_vt_trig, vals[tti])
+          for col, tbl in pairs(trig_dest) do
             local idx = col_idx[col]
             if idx and vals[idx] then table.insert(tbl, vals[idx]) end
           end
@@ -304,6 +330,15 @@ function segment.initialize_run()
       _ch("V_dc_3_BR",          _v_dc_BR)
       _ch("V_endcap_optical_U", _v_ec_opt_U)
       _ch("V_endcap_optical_D", _v_ec_opt_D)
+      if #_vt_trig > 0 then
+        simion.print(string.format(
+          "  Trigger schedule: %d rows,  t=0: %.4f us,  t_end: %.4f us\n",
+          #_vt_trig, _vt_trig[1], _vt_trig[#_vt_trig]))
+        _ch("V_ec_opt_U_trig", _v_ec_opt_U_trig)
+        _ch("V_ec_opt_D_trig", _v_ec_opt_D_trig)
+      else
+        simion.print("  Trigger schedule: not found (V_endcap_optical_U/D_trig columns absent)\n")
+      end
     else
       simion.print("WARNING: voltage file not found: " .. vpath .. "\n")
     end
@@ -399,13 +434,25 @@ function segment.fast_adjust()
   adj_elect[8] =  V_RF3 + dcBR   -- rod_3_BR
 
   -- Optical endcaps (electrodes 9, 10) — gated by triggers.
-  -- 0 V until trigger fires, then schedule runs from t=0 of that schedule.
+  -- Before trigger: 0 V.  After trigger: play post-trigger schedule (fine time axis)
+  -- if defined; otherwise fall back to main-schedule columns (coarse time axis).
+  -- In both cases time is measured from trigger-fire, not absolute TOF.
   local t9 = _trig_t(9, t)
-  if t9 then adj_elect[9]  = #_v_ec_opt_U > 0 and _interp(_vt, _v_ec_opt_U, t9) or 0
-  else       adj_elect[9]  = 0 end
+  if t9 then
+    adj_elect[9] = #_v_ec_opt_U_trig > 0
+      and _interp(_vt_trig, _v_ec_opt_U_trig, t9)
+      or  (#_v_ec_opt_U    > 0 and _interp(_vt, _v_ec_opt_U, t9) or 0)
+  else
+    adj_elect[9] = 0
+  end
   local t10 = _trig_t(10, t)
-  if t10 then adj_elect[10] = #_v_ec_opt_D > 0 and _interp(_vt, _v_ec_opt_D, t10) or 0
-  else        adj_elect[10] = 0 end
+  if t10 then
+    adj_elect[10] = #_v_ec_opt_D_trig > 0
+      and _interp(_vt_trig, _v_ec_opt_D_trig, t10)
+      or  (#_v_ec_opt_D    > 0 and _interp(_vt, _v_ec_opt_D, t10) or 0)
+  else
+    adj_elect[10] = 0
+  end
 
   -- Dielectric volumes (trapping_lens, collection_lens, lens_holder) are not driven here.
 end
