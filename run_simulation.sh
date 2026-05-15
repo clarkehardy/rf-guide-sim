@@ -6,6 +6,7 @@
 #   ./run_simulation.sh --vol 2 --run 3        # voltages_2.csv, trajectories_3.csv
 #   ./run_simulation.sh --no-animate           # skip the animation window
 #   ./run_simulation.sh --preview-voltages     # show the voltage preview plot
+#   ./run_simulation.sh --keep-tmp             # don't delete SIMION's trj*.tmp scratch files
 #
 # The voltage schedule is always regenerated from generate_voltages.py before
 # flying.  Edit that script to change RF frequencies, amplitudes, and DC pulses.
@@ -26,6 +27,7 @@ VOL_FILE=1
 RUN_NUM=1
 ANIMATE=1
 PREVIEW_VOLTAGES=0
+KEEP_TMP=0
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 usage() {
@@ -39,10 +41,41 @@ while [[ $# -gt 0 ]]; do
     --run)             RUN_NUM=$2;       shift 2 ;;
     --no-animate)      ANIMATE=0;        shift   ;;
     --preview-voltages) PREVIEW_VOLTAGES=1; shift ;;
+    --keep-tmp)        KEEP_TMP=1;       shift   ;;
     -h|--help)         usage ;;
     *) echo "Unknown argument: $1"; usage ;;
   esac
 done
+
+# ── Cleanup of SIMION scratch files ───────────────────────────────────────────
+# SIMION caches in-memory trajectory data to trj<hex>.tmp files during a fly
+# and is supposed to clean them up afterwards.  In --nogui mode it doesn't,
+# so we sweep them ourselves on exit.  We snapshot which trj*.tmp existed
+# before this run started so we only delete files this run created — any
+# trj*.tmp from a parallel SIMION process (if you ever run two at once) is
+# left alone.
+shopt -s nullglob
+TRJ_BEFORE=("$DIR"/trj*.tmp)
+shopt -u nullglob
+
+cleanup_trj() {
+  [[ $KEEP_TMP -eq 1 ]] && return
+  shopt -s nullglob
+  local after=("$DIR"/trj*.tmp)
+  shopt -u nullglob
+  # bash 3.2-compatible "is this file in the before-snapshot?" check via
+  # substring match.  trj<hex>.tmp filenames contain no spaces, so the
+  # space-padded match is safe.
+  local before_str=" ${TRJ_BEFORE[*]} "
+  local removed=0
+  for f in "${after[@]}"; do
+    if [[ "$before_str" != *" $f "* ]]; then
+      rm -f "$f" && removed=$((removed + 1))
+    fi
+  done
+  [[ $removed -gt 0 ]] && echo "   Cleaned up $removed SIMION trj*.tmp scratch file(s)"
+}
+trap cleanup_trj EXIT
 
 echo "━━━ run_simulation.sh  vol=${VOL_FILE}  run=${RUN_NUM} ━━━"
 
