@@ -469,9 +469,14 @@ def main():
                 # Trigger defined but never fired — electrode stays at 0 V.
                 return np.array([t_min, t_max]), np.array([0.0, 0.0])
 
-            # Before fire: 0 V.
-            t_pre = np.array([t_min, t_fire])
-            v_pre = np.array([0.0, 0.0])
+            # Before fire: main schedule up to t_fire (or 0 V if none defined).
+            if len(vt) > 0 and len(v_main) > 0:
+                mask = vt <= t_fire
+                t_pre = vt[mask] if mask.any() else np.array([t_min])
+                v_pre = v_main[mask] if mask.any() else np.array([0.0])
+            else:
+                t_pre = np.array([t_min])
+                v_pre = np.array([0.0])
 
             # After fire: use post-trigger schedule if available, else main schedule.
             if len(vt_tr) > 0 and len(v_trig) > 0:
