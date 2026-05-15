@@ -407,30 +407,32 @@ def show_transverse(xs, ys, zs, sub_iy, sub_ix, sub_iz, Vs, elec_mask, has_rods,
                     v_ecU, v_ecD, v_TL_init, v_TR_init, v_BL_init, v_BR_init, V_RF3_init):
     """X–Y cross-section at Z = TRAP_CENTRE_Z with independent per-rod DC sliders."""
 
-    fig = plt.figure(figsize=(15, 10))
+    fig = plt.figure(figsize=(15, 11))
     gs  = gridspec.GridSpec(
-        3, 10,
-        height_ratios=[3.0, 1.8, 0.45],
-        hspace=0.50, wspace=0.40,
+        4, 10,
+        height_ratios=[3.0, 1.8, 0.38, 0.38],
+        hspace=0.55, wspace=0.40,
     )
     ax_xy  = fig.add_subplot(gs[0, :])
     ax_x1d = fig.add_subplot(gs[1, :4])    # X profile
     ax_y1d = fig.add_subplot(gs[1, 6:])    # Y profile  (gap at col 4–5)
-    ax_s5  = fig.add_subplot(gs[2, 0:2])
-    ax_s6  = fig.add_subplot(gs[2, 2:4])
-    ax_s7  = fig.add_subplot(gs[2, 4:6])
-    ax_s8  = fig.add_subplot(gs[2, 6:8])
-    ax_srf = fig.add_subplot(gs[2, 8:])
+    # Row 2: top rods (TL, TR)
+    ax_s5  = fig.add_subplot(gs[2, :5])
+    ax_s6  = fig.add_subplot(gs[2, 5:])
+    # Row 3: bottom rods (BL, BR) + RF amplitude
+    ax_s7  = fig.add_subplot(gs[3, :3])
+    ax_s8  = fig.add_subplot(gs[3, 3:6])
+    ax_srf = fig.add_subplot(gs[3, 7:])
 
     c_active = 'steelblue' if has_rods else 'lightgray'
-    slider_TL = Slider(ax_s5,  'V_TL (5)  V', -100.0, 100.0,
-                       valinit=v_TL_init, valstep=0.5, color=c_active)
-    slider_TR = Slider(ax_s6,  'V_TR (6)  V', -100.0, 100.0,
-                       valinit=v_TR_init, valstep=0.5, color=c_active)
-    slider_BL = Slider(ax_s7,  'V_BL (7)  V', -100.0, 100.0,
-                       valinit=v_BL_init, valstep=0.5, color='navy' if has_rods else 'lightgray')
-    slider_BR = Slider(ax_s8,  'V_BR (8)  V', -100.0, 100.0,
-                       valinit=v_BR_init, valstep=0.5, color='navy' if has_rods else 'lightgray')
+    slider_TL = Slider(ax_s5,  'V_TL (5)  V', -10.0, 10.0,
+                       valinit=v_TL_init, valstep=0.1, color=c_active)
+    slider_TR = Slider(ax_s6,  'V_TR (6)  V', -10.0, 10.0,
+                       valinit=v_TR_init, valstep=0.1, color=c_active)
+    slider_BL = Slider(ax_s7,  'V_BL (7)  V', -10.0, 10.0,
+                       valinit=v_BL_init, valstep=0.1, color='navy' if has_rods else 'lightgray')
+    slider_BR = Slider(ax_s8,  'V_BR (8)  V', -10.0, 10.0,
+                       valinit=v_BR_init, valstep=0.1, color='navy' if has_rods else 'lightgray')
     rf_label  = 'V_RF3  V' if has_rods else 'V_RF3  [rods not loaded]'
     slider_rf = Slider(ax_srf, rf_label, 0.0, 600.0,
                        valinit=V_RF3_init, valstep=5.0,
