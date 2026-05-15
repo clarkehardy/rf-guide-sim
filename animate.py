@@ -72,10 +72,17 @@ def compute_geo(base=BASE):
     set2 = _bbox_union(*[bb(f"rod_2_{s}.stl") for s in ("TL", "TR", "BL", "BR")])
     set3 = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("TL", "TR", "BL", "BR")])
 
-    rod12_top = _bbox_union(*[bb(f"rod_{i}_{s}.stl") for i in (1, 2) for s in ("TL", "TR")])
-    rod12_bot = _bbox_union(*[bb(f"rod_{i}_{s}.stl") for i in (1, 2) for s in ("BL", "BR")])
-    rod3_top  = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("TL", "TR")])
-    rod3_bot  = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("BL", "BR")])
+    # Side view (X = into page, Y vertical): top/bottom Y bands
+    rod12_top  = _bbox_union(*[bb(f"rod_{i}_{s}.stl") for i in (1, 2) for s in ("TL", "TR")])
+    rod12_bot  = _bbox_union(*[bb(f"rod_{i}_{s}.stl") for i in (1, 2) for s in ("BL", "BR")])
+    rod3_top   = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("TL", "TR")])
+    rod3_bot   = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("BL", "BR")])
+
+    # Top view (Y = into page, X vertical): left (L = -x) and right (R = +x) X bands
+    rod12_left  = _bbox_union(*[bb(f"rod_{i}_{s}.stl") for i in (1, 2) for s in ("TL", "BL")])
+    rod12_right = _bbox_union(*[bb(f"rod_{i}_{s}.stl") for i in (1, 2) for s in ("TR", "BR")])
+    rod3_left   = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("TL", "BL")])
+    rod3_right  = _bbox_union(*[bb(f"rod_3_{s}.stl") for s in ("TR", "BR")])
 
     ec_loadU = bb("endcap_load_U.stl")
     ec_loadD = bb("endcap_load_D.stl")
@@ -95,19 +102,28 @@ def compute_geo(base=BASE):
 
     # View bounds: union of every loaded body, with small padding.
     all_bb = _bbox_union(set1, set2, set3, ec_loadU, ec_loadD, ec_optU, ec_optD)
-    view_z = view_y = None
+    view_z = view_y = view_x = None
     if all_bb:
         view_z = (all_bb[2][0] - 10.0, all_bb[2][1] + 10.0)
         view_y = (all_bb[1][0] -  2.0, all_bb[1][1] +  2.0)
+        view_x = (all_bb[0][0] -  2.0, all_bb[0][1] +  2.0)
+
+    xsp = lambda b: None if b is None else b[0]
 
     return dict(
         rod_z_set1         = zsp(set1),
         rod_z_set2         = zsp(set2),
         rod_z_set3         = zsp(set3),
+        # Side view (Y vertical)
         rod_y_top          = ysp(rod12_top),
         rod_y_bot          = ysp(rod12_bot),
         rod_y_top_3        = ysp(rod3_top),
         rod_y_bot_3        = ysp(rod3_bot),
+        # Top view (X vertical)
+        rod_x_left         = xsp(rod12_left),
+        rod_x_right        = xsp(rod12_right),
+        rod_x_left_3       = xsp(rod3_left),
+        rod_x_right_3      = xsp(rod3_right),
         gap_z              = gap_z,
         endcap_load_U_z    = cz(ec_loadU),
         endcap_load_D_z    = cz(ec_loadD),
@@ -115,6 +131,7 @@ def compute_geo(base=BASE):
         endcap_optical_D_z = cz(ec_optD),
         view_z             = view_z,
         view_y             = view_y,
+        view_x             = view_x,
     )
 
 
@@ -134,8 +151,9 @@ def load_trajectories(path):
             if len(parts) < 5:
                 continue
             ion_id = int(parts[0])
-            entry  = ions.setdefault(ion_id, {"t": [], "y": [], "z": []})
+            entry  = ions.setdefault(ion_id, {"t": [], "x": [], "y": [], "z": []})
             entry["t"].append(float(parts[1]))
+            entry["x"].append(float(parts[2]))   # Fusion X
             entry["y"].append(float(parts[3]))   # Fusion Y
             entry["z"].append(float(parts[4]))   # Fusion Z
     return {k: {kk: np.array(vv) for kk, vv in v.items()}
@@ -219,32 +237,54 @@ def compute_fire_times(ions, triggers):
 
 # ── Geometry drawing ──────────────────────────────────────────────────────────
 
-def draw_geometry(ax, triggers=(), trig_colors=()):
+def draw_geometry(ax, view="side", triggers=(), trig_colors=()):
+    """Render the geometry onto `ax`.
+
+    view='side' → Z horizontal, Y vertical (looking from +X).
+    view='top'  → Z horizontal, X vertical (looking from +Y, i.e. down at the
+                   trap from above).
+    """
     g = GEO
     rod_kw = dict(facecolor=(0.6, 0.6, 0.6), edgecolor="none", alpha=0.30, zorder=1)
 
+    if view == "side":
+        bands_12 = ("rod_y_top", "rod_y_bot")
+        bands_3  = ("rod_y_top_3", "rod_y_bot_3")
+        view_lim_key = "view_y"
+        vert_label   = "Y (mm)"
+        title        = "Side view  (Z = trap axis,  Y = height)"
+    elif view == "top":
+        bands_12 = ("rod_x_left", "rod_x_right")
+        bands_3  = ("rod_x_left_3", "rod_x_right_3")
+        view_lim_key = "view_x"
+        vert_label   = "X (mm)"
+        title        = "Top view  (Z = trap axis,  X = transverse)"
+    else:
+        raise ValueError(f"draw_geometry: unknown view={view!r}")
+
     # Sets 1 + 2 share the same (narrower) rod spacing.
-    for zspan, ysp in [
-        (g["rod_z_set1"], g["rod_y_top"]),
-        (g["rod_z_set1"], g["rod_y_bot"]),
-        (g["rod_z_set2"], g["rod_y_top"]),
-        (g["rod_z_set2"], g["rod_y_bot"]),
+    for zspan, bk in [
+        (g["rod_z_set1"], bands_12[0]),
+        (g["rod_z_set1"], bands_12[1]),
+        (g["rod_z_set2"], bands_12[0]),
+        (g["rod_z_set2"], bands_12[1]),
     ]:
-        if zspan is None or ysp is None:
-            continue
+        if zspan is None: continue
+        band = g[bk]
+        if band is None: continue
         z0, z1 = zspan
-        y0, y1 = ysp
-        ax.add_patch(mpatches.Rectangle((z0, y0), z1 - z0, y1 - y0, **rod_kw))
+        v0, v1 = band
+        ax.add_patch(mpatches.Rectangle((z0, v0), z1 - z0, v1 - v0, **rod_kw))
 
     # Set 3 (optical Paul trap) uses wider rod spacing.
     if g["rod_z_set3"] is not None:
         z0, z1 = g["rod_z_set3"]
-        for ysp in (g["rod_y_top_3"], g["rod_y_bot_3"]):
-            if ysp is None:
-                continue
-            y0, y1 = ysp
+        for bk in bands_3:
+            band = g[bk]
+            if band is None: continue
+            v0, v1 = band
             ax.add_patch(mpatches.Rectangle(
-                (z0, y0), z1 - z0, y1 - y0,
+                (z0, v0), z1 - z0, v1 - v0,
                 facecolor=(0.55, 0.45, 0.7), edgecolor="none", alpha=0.30, zorder=1))
 
     # Gate-valve gap.
@@ -273,11 +313,11 @@ def draw_geometry(ax, triggers=(), trig_colors=()):
 
     if g["view_z"] is not None:
         ax.set_xlim(g["view_z"])
-    if g["view_y"] is not None:
-        ax.set_ylim(g["view_y"])
+    if g[view_lim_key] is not None:
+        ax.set_ylim(g[view_lim_key])
     ax.set_xlabel("Z (mm)")
-    ax.set_ylabel("Y (mm)")
-    ax.set_title("Side view  (Z = trap axis,  Y = height)")
+    ax.set_ylabel(vert_label)
+    ax.set_title(title)
     ncol = 4 + len(triggers)
     ax.legend(loc="lower left", fontsize=7, ncol=ncol, framealpha=0.8)
 
@@ -333,17 +373,23 @@ def main():
         print("  No voltage file found — bottom panel omitted.")
 
     # ── Layout ────────────────────────────────────────────────────────────────
+    # Three panels stacked vertically: top view (X vs Z), side view (Y vs Z),
+    # voltage timeline (V vs time).  Top two share the Z axis so they line up.
     if has_volt:
-        fig, (ax_top, ax_bot) = plt.subplots(
-            2, 1, figsize=(13, 7),
-            gridspec_kw={"height_ratios": [2, 1]})
-        fig.subplots_adjust(hspace=0.38)
+        fig = plt.figure(figsize=(13, 9.5))
+        gs = fig.add_gridspec(3, 1, height_ratios=[1.3, 1.3, 1.0], hspace=0.45)
+        ax_xz  = fig.add_subplot(gs[0])
+        ax_yz  = fig.add_subplot(gs[1], sharex=ax_xz)
+        ax_bot = fig.add_subplot(gs[2])
     else:
-        fig, ax_top = plt.subplots(1, 1, figsize=(13, 5))
+        fig, (ax_xz, ax_yz) = plt.subplots(
+            2, 1, figsize=(13, 7), sharex=True,
+            gridspec_kw={"hspace": 0.40})
         ax_bot = None
 
-    # ── Top panel ─────────────────────────────────────────────────────────────
-    draw_geometry(ax_top, triggers=triggers, trig_colors=trig_colors)
+    # ── Geometry on both trajectory panels ────────────────────────────────────
+    draw_geometry(ax_xz, view="top",  triggers=triggers, trig_colors=trig_colors)
+    draw_geometry(ax_yz, view="side", triggers=triggers, trig_colors=trig_colors)
 
     n_ions = len(ions)
     if n_ions <= 10:
@@ -353,24 +399,27 @@ def main():
     ion_ids = sorted(ions.keys())
     colors  = {iid: cmap(i / max(1, n_ions - 1)) for i, iid in enumerate(ion_ids)}
 
-    trails = {}
-    dots   = {}
+    # Trails and "leading-edge" dots on both views.
+    trails_xz, dots_xz = {}, {}
+    trails_yz, dots_yz = {}, {}
     for iid in ion_ids:
         c = colors[iid]
-        trail, = ax_top.plot([], [], lw=1.3, color=c, alpha=0.85, zorder=3)
-        dot,   = ax_top.plot([], [], "o", ms=5, color=c, zorder=4)
-        trails[iid] = trail
-        dots[iid]   = dot
+        tr_xz, = ax_xz.plot([], [], lw=1.3, color=c, alpha=0.85, zorder=3)
+        do_xz, = ax_xz.plot([], [], "o", ms=5, color=c, zorder=4)
+        tr_yz, = ax_yz.plot([], [], lw=1.3, color=c, alpha=0.85, zorder=3)
+        do_yz, = ax_yz.plot([], [], "o", ms=5, color=c, zorder=4)
+        trails_xz[iid] = tr_xz; dots_xz[iid] = do_xz
+        trails_yz[iid] = tr_yz; dots_yz[iid] = do_yz
 
-    time_label = ax_top.text(
-        0.995, 0.97, "", transform=ax_top.transAxes,
+    time_label = ax_xz.text(
+        0.995, 0.97, "", transform=ax_xz.transAxes,
         va="top", ha="right", fontsize=9,
         bbox=dict(boxstyle="round,pad=0.25", fc="white", alpha=0.75))
 
     # Precompute the first time each ion crosses Z = 200 mm (Fusion world).
-    # crossing_t[iid] = time of first crossing, or inf if never reached.
     GAP_THRESHOLD_Z = 200.0
-    ax_top.axvline(GAP_THRESHOLD_Z, color="gray", lw=0.8, ls="--", alpha=0.5)
+    for ax in (ax_xz, ax_yz):
+        ax.axvline(GAP_THRESHOLD_Z, color="gray", lw=0.8, ls="--", alpha=0.5)
 
     crossing_t = {}
     for iid, data in ions.items():
@@ -378,8 +427,8 @@ def main():
         crossing_t[iid] = data["t"][crossed[0]] if len(crossed) else np.inf
 
     n_total = len(ions)
-    gap_label = ax_top.text(
-        0.005, 0.97, "", transform=ax_top.transAxes,
+    gap_label = ax_xz.text(
+        0.005, 0.97, "", transform=ax_xz.transAxes,
         va="top", ha="left", fontsize=9,
         bbox=dict(boxstyle="round,pad=0.25", fc="white", alpha=0.75))
 
@@ -433,12 +482,16 @@ def main():
         for iid, data in ions.items():
             mask = data["t"] <= t
             zz = data["z"][mask]
+            xx = data["x"][mask]
             yy = data["y"][mask]
-            trails[iid].set_data(zz, yy)
+            trails_xz[iid].set_data(zz, xx)
+            trails_yz[iid].set_data(zz, yy)
             if mask.any():
-                dots[iid].set_data([zz[-1]], [yy[-1]])
+                dots_xz[iid].set_data([zz[-1]], [xx[-1]])
+                dots_yz[iid].set_data([zz[-1]], [yy[-1]])
             else:
-                dots[iid].set_data([], [])
+                dots_xz[iid].set_data([], [])
+                dots_yz[iid].set_data([], [])
 
         n_crossed = sum(1 for ct in crossing_t.values() if ct <= t)
         gap_label.set_text(f"Fraction crossed:  {n_crossed}/{n_total}")
