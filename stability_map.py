@@ -48,6 +48,7 @@ TRAP_CENTRE_X = 0.0     # mm  (trap axis sits on X = 0)
 TRAP_CENTRE_Y = 19.05   # mm  (mid-point between inner faces of top/bottom set-3 rods)
 ENDCAP_U_Z    = 268.06  # mm  (centre of endcap_optical_U, lower Z)
 ENDCAP_D_Z    = 283.94  # mm  (centre of endcap_optical_D, higher Z)
+TRAP_CENTRE_Z = 276.0   # mm  (midpoint between endcap centres; Z-slice for transverse view)
 
 # ── Region of interest (Fusion world, mm) ─────────────────────────────────────
 ROI_X = (-15.0,  15.0)
@@ -116,11 +117,14 @@ def load_data():
 
     sub_iy = _fi(TRAP_CENTRE_Y, GEM_OFF[1]) - iy0
     sub_ix = _fi(TRAP_CENTRE_X, GEM_OFF[0]) - ix0
+    sub_iz = _fi(TRAP_CENTRE_Z, GEM_OFF[2]) - iz0
 
     if not (0 <= sub_iy < len(ys)):
         sys.exit(f"ERROR: TRAP_CENTRE_Y={TRAP_CENTRE_Y} outside ROI_Y — adjust ROI_Y.")
     if not (0 <= sub_ix < len(xs)):
         sys.exit(f"ERROR: TRAP_CENTRE_X={TRAP_CENTRE_X} outside ROI_X — adjust ROI_X.")
+    if not (0 <= sub_iz < len(zs)):
+        sys.exit(f"ERROR: TRAP_CENTRE_Z={TRAP_CENTRE_Z} outside ROI_Z — adjust ROI_Z.")
 
     sl = np.s_[iz0:iz1 + 1, iy0:iy1 + 1, ix0:ix1 + 1]
 
@@ -150,7 +154,7 @@ def load_data():
             Vs[en] = None
 
     has_rods = all(Vs.get(en) is not None for en in (5, 6, 7, 8))
-    return xs, ys, zs, sub_iy, sub_ix, Vs, elec_mask, has_rods
+    return xs, ys, zs, sub_iy, sub_ix, sub_iz, Vs, elec_mask, has_rods
 
 
 # ── Pseudopotential ───────────────────────────────────────────────────────────
@@ -176,16 +180,23 @@ def _pseudopotential(Vs, V_RF3):
 
 # ── Combined effective potential ──────────────────────────────────────────────
 
-def _combined(Vs, elec_mask, v_ecU, v_ecD, v_rod, V_RF3):
+def _combined_perrod(Vs, elec_mask, v_ecU, v_ecD, v_TL, v_TR, v_BL, v_BR, V_RF3):
+    """Full per-rod DC control.  Electrode map: 5=TL, 6=TR, 7=BL, 8=BR."""
     Vc = Vs[9] * v_ecU + Vs[10] * v_ecD
-    for en in (5, 6, 7, 8):
+    for en, v in ((5, v_TL), (6, v_TR), (7, v_BL), (8, v_BR)):
         if Vs.get(en) is not None:
-            Vc = Vc + Vs[en] * v_rod
+            Vc = Vc + Vs[en] * v
     if V_RF3 > 0:
         pseudo = _pseudopotential(Vs, V_RF3)
         if pseudo is not None:
             Vc = Vc + pseudo
     return np.where(elec_mask, np.nan, Vc)
+
+
+def _combined(Vs, elec_mask, v_ecU, v_ecD, v_rod, V_RF3):
+    """Common-mode rod DC (all four rods at the same voltage)."""
+    return _combined_perrod(Vs, elec_mask, v_ecU, v_ecD,
+                            v_rod, v_rod, v_rod, v_rod, V_RF3)
 
 
 # ── Stability analysis ────────────────────────────────────────────────────────
@@ -390,6 +401,129 @@ def show_interactive(xs, ys, zs, sub_iy, sub_ix, Vs, elec_mask, has_rods,
     plt.show()
 
 
+# ── Transverse (X–Y) potential explorer ──────────────────────────────────────
+
+def show_transverse(xs, ys, zs, sub_iy, sub_ix, sub_iz, Vs, elec_mask, has_rods,
+                    v_ecU, v_ecD, v_TL_init, v_TR_init, v_BL_init, v_BR_init, V_RF3_init):
+    """X–Y cross-section at Z = TRAP_CENTRE_Z with independent per-rod DC sliders."""
+
+    fig = plt.figure(figsize=(15, 10))
+    gs  = gridspec.GridSpec(
+        3, 10,
+        height_ratios=[3.0, 1.8, 0.45],
+        hspace=0.50, wspace=0.40,
+    )
+    ax_xy  = fig.add_subplot(gs[0, :])
+    ax_x1d = fig.add_subplot(gs[1, :4])    # X profile
+    ax_y1d = fig.add_subplot(gs[1, 6:])    # Y profile  (gap at col 4–5)
+    ax_s5  = fig.add_subplot(gs[2, 0:2])
+    ax_s6  = fig.add_subplot(gs[2, 2:4])
+    ax_s7  = fig.add_subplot(gs[2, 4:6])
+    ax_s8  = fig.add_subplot(gs[2, 6:8])
+    ax_srf = fig.add_subplot(gs[2, 8:])
+
+    c_active = 'steelblue' if has_rods else 'lightgray'
+    slider_TL = Slider(ax_s5,  'V_TL (5)  V', -100.0, 100.0,
+                       valinit=v_TL_init, valstep=0.5, color=c_active)
+    slider_TR = Slider(ax_s6,  'V_TR (6)  V', -100.0, 100.0,
+                       valinit=v_TR_init, valstep=0.5, color=c_active)
+    slider_BL = Slider(ax_s7,  'V_BL (7)  V', -100.0, 100.0,
+                       valinit=v_BL_init, valstep=0.5, color='navy' if has_rods else 'lightgray')
+    slider_BR = Slider(ax_s8,  'V_BR (8)  V', -100.0, 100.0,
+                       valinit=v_BR_init, valstep=0.5, color='navy' if has_rods else 'lightgray')
+    rf_label  = 'V_RF3  V' if has_rods else 'V_RF3  [rods not loaded]'
+    slider_rf = Slider(ax_srf, rf_label, 0.0, 600.0,
+                       valinit=V_RF3_init, valstep=5.0,
+                       color='darkorange' if has_rods else 'lightgray')
+    if not has_rods:
+        for s in (slider_TL, slider_TR, slider_BL, slider_BR, slider_rf):
+            s.set_active(False)
+
+    XX, YY = np.meshgrid(xs, ys)
+    mesh_xy = ax_xy.pcolormesh(XX, YY, np.zeros((len(ys), len(xs))),
+                               cmap='RdBu_r', shading='nearest', zorder=1)
+    fig.colorbar(mesh_xy, ax=ax_xy, label='V  (V)', shrink=0.55, pad=0.01)
+
+    # Electrode cross-sections as a grey overlay (rods appear as ~circular patches).
+    rod_mask_xy = elec_mask[sub_iz, :, :]
+    if rod_mask_xy.any():
+        ax_xy.contourf(XX, YY, rod_mask_xy.astype(float), levels=[0.5, 1.5],
+                       colors=['gray'], alpha=0.55, zorder=2)
+
+    ax_xy.axvline(TRAP_CENTRE_X, color='white', lw=0.7, ls=':', alpha=0.5)
+    ax_xy.axhline(TRAP_CENTRE_Y, color='white', lw=0.7, ls=':', alpha=0.5)
+    min_marker, = ax_xy.plot([], [], 'w+', ms=14, mew=2.5, zorder=10,
+                             label='Potential min')
+    min_text = ax_xy.text(0.01, 0.97, '', transform=ax_xy.transAxes,
+                          va='top', ha='left', fontsize=9, color='white',
+                          bbox=dict(boxstyle='round,pad=0.3', fc='black', alpha=0.55))
+    ax_xy.set_xlabel('X  (mm)');  ax_xy.set_ylabel('Y  (mm)')
+    ax_xy.set_title(f'X–Y plane  (Z = {zs[sub_iz]:.1f} mm,  '
+                    f'V_ecU={v_ecU:.0f} V,  V_ecD={v_ecD:.0f} V)', fontsize=10)
+    ax_xy.legend(loc='lower right', fontsize=8, framealpha=0.7)
+
+    line_x,     = ax_x1d.plot(xs, np.zeros_like(xs), color='steelblue', lw=1.8)
+    vline_xmin  = ax_x1d.axvline(np.nan, color='limegreen', lw=1.5, ls='-.', alpha=0.9)
+    ax_x1d.axvline(TRAP_CENTRE_X, color='gray', lw=0.8, ls='--', alpha=0.5)
+    ax_x1d.axhline(0, color='gray', lw=0.5, alpha=0.3)
+    ax_x1d.set_xlabel('X  (mm)');  ax_x1d.set_ylabel('V  (V)')
+    ax_x1d.grid(True, alpha=0.18)
+
+    line_y,     = ax_y1d.plot(ys, np.zeros_like(ys), color='steelblue', lw=1.8)
+    vline_ymin  = ax_y1d.axvline(np.nan, color='limegreen', lw=1.5, ls='-.', alpha=0.9)
+    ax_y1d.axvline(TRAP_CENTRE_Y, color='gray', lw=0.8, ls='--', alpha=0.5)
+    ax_y1d.axhline(0, color='gray', lw=0.5, alpha=0.3)
+    ax_y1d.set_xlabel('Y  (mm)');  ax_y1d.set_ylabel('V  (V)')
+    ax_y1d.grid(True, alpha=0.18)
+
+    def _redraw(v_TL, v_TR, v_BL, v_BR, V_RF3):
+        Vc   = _combined_perrod(Vs, elec_mask, v_ecU, v_ecD,
+                                v_TL, v_TR, v_BL, v_BR, V_RF3)
+        V_xy = Vc[sub_iz, :, :]             # (len(ys), len(xs))
+
+        vabs = float(np.nanmax(np.abs(V_xy))) or 1.0
+        mesh_xy.set_array(V_xy.ravel())
+        mesh_xy.set_clim(-vabs, vabs)
+
+        # Potential minimum in the free-space region.
+        masked   = np.where(np.isnan(V_xy), np.inf, V_xy)
+        flat_idx = np.argmin(masked)
+        iy_m, ix_m = np.unravel_index(flat_idx, masked.shape)
+        x_m, y_m   = xs[ix_m], ys[iy_m]
+        dx_m = x_m - TRAP_CENTRE_X
+        dy_m = y_m - TRAP_CENTRE_Y
+
+        min_marker.set_data([x_m], [y_m])
+        min_text.set_text(f'Min: X={x_m:.2f} mm  Y={y_m:.2f} mm\n'
+                          f'Δx={dx_m:+.2f} mm  Δy={dy_m:+.2f} mm')
+
+        # 1-D cuts through the minimum.
+        line_x.set_ydata(V_xy[iy_m, :])
+        ax_x1d.relim();  ax_x1d.autoscale_view()
+        vline_xmin.set_xdata([x_m, x_m])
+        ax_x1d.set_title(f'X profile at Y = {y_m:.2f} mm', fontsize=9)
+
+        line_y.set_ydata(V_xy[:, ix_m])
+        ax_y1d.relim();  ax_y1d.autoscale_view()
+        vline_ymin.set_xdata([y_m, y_m])
+        ax_y1d.set_title(f'Y profile at X = {x_m:.2f} mm', fontsize=9)
+
+        fig.canvas.draw_idle()
+
+    def _update(_):
+        _redraw(slider_TL.val, slider_TR.val, slider_BL.val, slider_BR.val, slider_rf.val)
+
+    for s in (slider_TL, slider_TR, slider_BL, slider_BR, slider_rf):
+        s.on_changed(_update)
+
+    _redraw(v_TL_init, v_TR_init, v_BL_init, v_BR_init, V_RF3_init)
+    fig.suptitle(
+        'Optical Paul trap – transverse potential explorer\n'
+        'Per-rod DC trims shift the potential minimum in X–Y',
+        fontsize=11, fontweight='bold')
+    plt.show()
+
+
 # ── PyVista 3-D view ──────────────────────────────────────────────────────────
 
 def show_3d(xs, ys, zs, Vs, elec_mask, has_rods,
@@ -484,6 +618,16 @@ def main():
                     help="Initial common-mode DC on set-3 rods (V, electrodes 5–8)")
     ap.add_argument("--v-rf3",  type=float, default=300.0,
                     help="Initial RF amplitude for pseudopotential (V)")
+    ap.add_argument("--transverse", action="store_true",
+                    help="Show X–Y transverse explorer (per-rod DC sliders) instead of Z-axis view")
+    ap.add_argument("--v-tl",   type=float, default=0.0,
+                    help="Initial V_TL DC trim for transverse view (V, electrode 5)")
+    ap.add_argument("--v-tr",   type=float, default=0.0,
+                    help="Initial V_TR DC trim for transverse view (V, electrode 6)")
+    ap.add_argument("--v-bl",   type=float, default=0.0,
+                    help="Initial V_BL DC trim for transverse view (V, electrode 7)")
+    ap.add_argument("--v-br",   type=float, default=0.0,
+                    help="Initial V_BR DC trim for transverse view (V, electrode 8)")
     ap.add_argument("--3d",     dest="show3d", action="store_true",
                     help="Open PyVista 3-D window at the specified biases")
     ap.add_argument("--screenshot", default=None,
@@ -492,7 +636,7 @@ def main():
     do_3d = args.show3d or bool(args.screenshot)
 
     print("Loading PA files …")
-    xs, ys, zs, sub_iy, sub_ix, Vs, elec_mask, has_rods = load_data()
+    xs, ys, zs, sub_iy, sub_ix, sub_iz, Vs, elec_mask, has_rods = load_data()
 
     if not has_rods:
         print("\nWARNING: one or more rod PA files (pa5–pa8) not found.\n"
@@ -501,7 +645,8 @@ def main():
     print(f"\nROI  X ∈ [{xs[0]:.1f}, {xs[-1]:.1f}]  "
           f"Y ∈ [{ys[0]:.1f}, {ys[-1]:.1f}]  "
           f"Z ∈ [{zs[0]:.1f}, {zs[-1]:.1f}]  mm")
-    print(f"Trap-axis slice: X = {xs[sub_ix]:.2f} mm,  Y = {ys[sub_iy]:.2f} mm")
+    print(f"Trap-axis slice: X = {xs[sub_ix]:.2f} mm,  Y = {ys[sub_iy]:.2f} mm,  "
+          f"Z = {zs[sub_iz]:.2f} mm")
     print(f"Endcaps:  Z = {ENDCAP_U_Z:.2f} mm (U, elec 9),  "
           f"Z = {ENDCAP_D_Z:.2f} mm (D, elec 10)")
 
@@ -510,8 +655,13 @@ def main():
                 args.v_ecu, args.v_ecd, args.v_rod, args.v_rf3,
                 screenshot=args.screenshot)
 
-    show_interactive(xs, ys, zs, sub_iy, sub_ix, Vs, elec_mask, has_rods,
-                     args.v_ecu, args.v_ecd, args.v_rod, args.v_rf3)
+    if args.transverse:
+        show_transverse(xs, ys, zs, sub_iy, sub_ix, sub_iz, Vs, elec_mask, has_rods,
+                        args.v_ecu, args.v_ecd,
+                        args.v_tl, args.v_tr, args.v_bl, args.v_br, args.v_rf3)
+    else:
+        show_interactive(xs, ys, zs, sub_iy, sub_ix, Vs, elec_mask, has_rods,
+                         args.v_ecu, args.v_ecd, args.v_rod, args.v_rf3)
 
 
 if __name__ == "__main__":
