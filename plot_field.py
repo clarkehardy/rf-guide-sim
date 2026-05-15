@@ -227,6 +227,277 @@ def read_voltages_csv(csv_path, time_us):
     return voltages, float(chosen[t_idx])
 
 
+def read_voltages_split(csv_path, time_us):
+    """Read voltages_N.csv and return DC and RF amplitudes separately.
+
+    Returns:
+      dc_per_electrode:  {1..10 → V}  DC voltage on each electrode (sets 1+2
+                         have 0 DC by construction; set-3 rods carry the
+                         per-rod DC trim; endcaps carry their own DC values).
+      V_RF_amp:          float, sets 1+2 RF amplitude (V, zero-to-peak)
+      V_RF3_amp:         float, set 3 RF amplitude (V, zero-to-peak)
+      time_used:         float, the actual CSV time (µs) sampled.
+    """
+    rows, header = [], None
+    with open(csv_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",")
+            if header is None:
+                header = parts
+                continue
+            rows.append([float(x) for x in parts])
+    if not rows:
+        return {}, 0.0, 0.0, 0.0
+    arr = np.array(rows)
+    t_idx     = header.index("time_us")
+    chosen_i  = int(np.argmin(np.abs(arr[:, t_idx] - time_us)))
+    chosen    = arr[chosen_i]
+
+    def get(name):
+        return float(chosen[header.index(name)]) if name in header else 0.0
+
+    V_RF_amp  = get("V_RF")
+    V_RF3_amp = get("V_RF3")
+    dc = {
+        1:  0.0,
+        2:  0.0,
+        3:  get("V_endcap_load_U"),
+        4:  get("V_endcap_load_D"),
+        5:  get("V_dc_3_TL"),
+        6:  get("V_dc_3_TR"),
+        7:  get("V_dc_3_BL"),
+        8:  get("V_dc_3_BR"),
+        9:  get("V_endcap_optical_U"),
+        10: get("V_endcap_optical_D"),
+    }
+    return dc, V_RF_amp, V_RF3_amp, float(chosen[t_idx])
+
+
+def read_rf_freqs(csv_path):
+    """Parse '# f_RF_Hz=...' and '# f_RF3_Hz=...' metadata.  Returns (f_RF, f_RF3)
+    in Hz, with None for any missing entry."""
+    import re
+    f_RF, f_RF3 = None, None
+    with open(csv_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line.startswith("#"):
+                break
+            m = re.match(r"#\s*f_RF_Hz\s*=\s*([0-9.eE+\-]+)", line)
+            if m:
+                f_RF = float(m.group(1))
+            m = re.match(r"#\s*f_RF3_Hz\s*=\s*([0-9.eE+\-]+)", line)
+            if m:
+                f_RF3 = float(m.group(1))
+    return f_RF, f_RF3
+
+
+def read_particle_params(config_path):
+    """Parse particle_radius_m, particle_density_kgm3, and charge from
+    trap_config.lua.  Returns (mass_kg, charge_e).  Charge defaults to 100
+    if absent."""
+    import re
+    text = open(config_path).read()
+    text = re.sub(r"--\[\[.*?\]\]", "", text, flags=re.DOTALL)
+    text = re.sub(r"--[^\n]*", "", text)
+
+    def find_num(key):
+        m = re.search(rf"\b{key}\b\s*=\s*([0-9.eE+\-]+)", text)
+        return float(m.group(1)) if m else None
+
+    r_p = find_num("particle_radius_m")
+    rho = find_num("particle_density_kgm3")
+    chg = find_num("charge")
+    if r_p is None or rho is None:
+        raise ValueError(
+            f"Could not parse particle_radius_m / particle_density_kgm3 "
+            f"from {config_path}")
+    mass_kg = (4.0 / 3.0) * np.pi * r_p**3 * rho
+    return mass_kg, int(chg if chg is not None else 100)
+
+
+# ── RF-phasing sign tables ────────────────────────────────────────────────────
+# Match the assignments in paulTrap.lua: sets 1+2 use TL/BR as +RF and TR/BL as
+# -RF; set 3 uses TL/BR as +RF3 and TR/BL as -RF3.
+RF12_SIGNS = {1: +1.0, 2: -1.0}
+RF3_SIGNS  = {5: +1.0, 6: -1.0, 7: -1.0, 8: +1.0}
+
+
+# ── Pseudopotential computation ───────────────────────────────────────────────
+
+def _slab_bounds(axis, ix0, iy0, iz0, n_span):
+    """Slab index ranges around the requested axis line, with ±1 perpendicular
+    cells for central-difference gradients."""
+    if axis == "x":
+        return (slice(iz0 - 1, iz0 + 2),
+                slice(iy0 - 1, iy0 + 2),
+                slice(max(0, ix0 - n_span), min(NX, ix0 + n_span + 1)))
+    if axis == "y":
+        return (slice(iz0 - 1, iz0 + 2),
+                slice(max(0, iy0 - n_span), min(NY, iy0 + n_span + 1)),
+                slice(ix0 - 1, ix0 + 2))
+    if axis == "z":
+        return (slice(max(0, iz0 - n_span), min(NZ, iz0 + n_span + 1)),
+                slice(iy0 - 1, iy0 + 2),
+                slice(ix0 - 1, ix0 + 2))
+    raise ValueError(f"axis must be x/y/z, got {axis}")
+
+
+def _line_and_grads(slab, axis, dx_m):
+    """From a (3, 3, N) / (3, N, 3) / (N, 3, 3) slab, return the centre-line
+    values plus the three partial derivatives at every point on that line.
+    Perpendicular derivatives use a 2nd-order central difference between the
+    centre line's neighbours; the along-axis derivative uses np.gradient."""
+    if axis == "x":
+        V    = slab[1, 1, :]
+        dVdx = np.gradient(V, dx_m)
+        dVdy = (slab[1, 2, :] - slab[1, 0, :]) / (2.0 * dx_m)
+        dVdz = (slab[2, 1, :] - slab[0, 1, :]) / (2.0 * dx_m)
+    elif axis == "y":
+        V    = slab[1, :, 1]
+        dVdy = np.gradient(V, dx_m)
+        dVdx = (slab[1, :, 2] - slab[1, :, 0]) / (2.0 * dx_m)
+        dVdz = (slab[2, :, 1] - slab[0, :, 1]) / (2.0 * dx_m)
+    else:  # z
+        V    = slab[:, 1, 1]
+        dVdz = np.gradient(V, dx_m)
+        dVdy = (slab[:, 2, 1] - slab[:, 0, 1]) / (2.0 * dx_m)
+        dVdx = (slab[:, 1, 2] - slab[:, 1, 0]) / (2.0 * dx_m)
+    return V, dVdx, dVdy, dVdz
+
+
+def compute_pseudo(centre, span_mm, dc, V_RF_amp, V_RF3_amp,
+                   mass_kg, charge_e, f_RF, f_RF3):
+    """Compute U_DC, Ψ_RF12, Ψ_RF3, and U_total in eV along the three Cartesian
+    axes through `centre`.  Loads each paN file at most once.
+
+    Returns a dict keyed by axis ("x","y","z"), each value being a 5-tuple
+    (axis_pos_mm, U_DC_eV, Psi_RF_eV, Psi_RF3_eV, U_total_eV).
+    """
+    e_C   = 1.602176634e-19            # elementary charge, Coulombs
+    q     = charge_e * e_C
+    DX_m  = DX * 1e-3                   # mm → m
+
+    x_f, y_f, z_f = gem_axes()
+    cx, cy, cz = centre
+    ix0 = int(round((cx - GEM_OFF[0]) / DX))
+    iy0 = int(round((cy - GEM_OFF[1]) / DX))
+    iz0 = int(round((cz - GEM_OFF[2]) / DX))
+    n_span = int(np.ceil(span_mm / DX))
+    if not (1 <= ix0 < NX - 1 and 1 <= iy0 < NY - 1 and 1 <= iz0 < NZ - 1):
+        raise ValueError(
+            f"Centre ({cx},{cy},{cz}) too close to grid edge to take "
+            f"central differences in all directions.")
+
+    bounds = {a: _slab_bounds(a, ix0, iy0, iz0, n_span) for a in "xyz"}
+    # Three accumulators per axis: V_DC, V_RF amplitude, V_RF3 amplitude.
+    acc = {a: {"dc": np.zeros(tuple(s.stop - s.start for s in bounds[a])),
+               "rf": np.zeros(tuple(s.stop - s.start for s in bounds[a])),
+               "rf3": np.zeros(tuple(s.stop - s.start for s in bounds[a]))}
+           for a in "xyz"}
+
+    for en in range(1, 11):
+        v_dc      = dc.get(en, 0.0)
+        rf_amp    = V_RF_amp  * RF12_SIGNS.get(en, 0.0)
+        rf3_amp   = V_RF3_amp * RF3_SIGNS.get(en, 0.0)
+        if (abs(v_dc) < 1e-12 and abs(rf_amp) < 1e-12 and abs(rf3_amp) < 1e-12):
+            continue
+        pa_path = os.path.join(BASE, f"paulTrap.pa{en}")
+        if not os.path.exists(pa_path):
+            print(f"  [skip] paulTrap.pa{en} not found")
+            continue
+        print(f"  pa{en}: V_DC = {v_dc:+9.3f} V,  "
+              f"RF1_amp = {rf_amp:+9.3f} V,  "
+              f"RF3_amp = {rf3_amp:+9.3f} V  — loading")
+        Vu = read_pa_volts(pa_path)
+        for a in "xyz":
+            slab = Vu[bounds[a]]
+            if abs(v_dc)    >= 1e-12: acc[a]["dc"]  += v_dc    * slab
+            if abs(rf_amp)  >= 1e-12: acc[a]["rf"]  += rf_amp  * slab
+            if abs(rf3_amp) >= 1e-12: acc[a]["rf3"] += rf3_amp * slab
+        del Vu
+
+    Omega_RF  = 2.0 * np.pi * f_RF
+    Omega_RF3 = 2.0 * np.pi * f_RF3
+    prefac_RF  = (q * q) / (4.0 * mass_kg * Omega_RF  * Omega_RF)  / e_C  # J→eV
+    prefac_RF3 = (q * q) / (4.0 * mass_kg * Omega_RF3 * Omega_RF3) / e_C
+
+    results = {}
+    for a in "xyz":
+        # DC contribution: charge_e × V_DC gives eV directly.
+        V_DC_line, *_         = _line_and_grads(acc[a]["dc"],  a, DX_m)
+        _, gx_rf,  gy_rf,  gz_rf  = _line_and_grads(acc[a]["rf"],  a, DX_m)
+        _, gx_rf3, gy_rf3, gz_rf3 = _line_and_grads(acc[a]["rf3"], a, DX_m)
+        gradV_RF_sq  = gx_rf**2  + gy_rf**2  + gz_rf**2
+        gradV_RF3_sq = gx_rf3**2 + gy_rf3**2 + gz_rf3**2
+
+        U_DC_eV     = charge_e * V_DC_line
+        Psi_RF_eV   = prefac_RF  * gradV_RF_sq
+        Psi_RF3_eV  = prefac_RF3 * gradV_RF3_sq
+        U_total_eV  = U_DC_eV + Psi_RF_eV + Psi_RF3_eV
+
+        if a == "x":
+            ix_lo = bounds["x"][2].start
+            ix_hi = bounds["x"][2].stop
+            axis_pos = x_f[ix_lo:ix_hi] - cx
+        elif a == "y":
+            iy_lo = bounds["y"][1].start
+            iy_hi = bounds["y"][1].stop
+            axis_pos = y_f[iy_lo:iy_hi] - cy
+        else:
+            iz_lo = bounds["z"][0].start
+            iz_hi = bounds["z"][0].stop
+            axis_pos = z_f[iz_lo:iz_hi] - cz
+
+        results[a] = (axis_pos, U_DC_eV, Psi_RF_eV, Psi_RF3_eV, U_total_eV)
+
+    return results
+
+
+def plot_pseudo(results, centre, span_mm, label, ylim=None):
+    """Plot U_DC, Ψ_RF1, Ψ_RF3, U_total in eV along each Cartesian axis."""
+    cx, cy, cz = centre
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.6), sharey=True)
+
+    for ax, axis_name, other_a, other_b in [
+        (axes[0], "x", ("y", cy), ("z", cz)),
+        (axes[1], "y", ("x", cx), ("z", cz)),
+        (axes[2], "z", ("x", cx), ("y", cy)),
+    ]:
+        pos, U_DC, Psi_RF, Psi_RF3, U_tot = results[axis_name]
+        ax.plot(pos, U_DC,   color="steelblue",   lw=1.4, label=r"$q\,V_\mathrm{DC}$")
+        ax.plot(pos, Psi_RF, color="darkorange",  lw=1.4,
+                label=r"$\Psi_\mathrm{RF}$ (sets 1+2)")
+        ax.plot(pos, Psi_RF3, color="seagreen",   lw=1.4,
+                label=r"$\Psi_\mathrm{RF3}$ (set 3)")
+        ax.plot(pos, U_tot,   color="crimson",    lw=2.2,
+                label=r"$U_\mathrm{eff} = q V_\mathrm{DC} + \Psi$")
+        ax.axvline(0, color="grey", lw=0.5, ls=":")
+        ax.axhline(0, color="grey", lw=0.5)
+        ax.grid(True, alpha=0.18)
+        ax.set_xlabel(rf"$\Delta {axis_name}$  (mm)")
+        ax.set_title(f"Along {axis_name}  "
+                     f"({other_a[0]}={other_a[1]:.3f}, {other_b[0]}={other_b[1]:.3f})")
+        if ylim is not None:
+            ax.set_ylim(ylim)
+    axes[0].set_ylabel("Effective potential energy  (eV)")
+    axes[2].legend(fontsize=8, loc="best", framealpha=0.85)
+
+    fig.suptitle(
+        f"Effective trap potential through optical Paul trap centre "
+        f"({cx:.2f}, {cy:.2f}, {cz:.2f}) mm  —  span ±{span_mm:g} mm",
+        fontsize=10)
+    fig.tight_layout()
+    out_name = f"field_pseudo_{label}.png" if label else "field_pseudo.png"
+    out = os.path.join(BASE, out_name)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"  Saved: {out}")
+    return fig
+
+
 # ── Total potential through a centre point ────────────────────────────────────
 
 def plot_total(voltages, centre, span_mm, label):
@@ -604,9 +875,14 @@ def main():
     # --total mode: sum V_N · pa_N along x/y/z through a centre point.
     ap.add_argument("--total", action="store_true",
                     help="Plot the total potential V = Σ V_N · pa_N along the "
-                         "three Cartesian axes through a centre point.  "
-                         "Useful for comparing field shape with and without "
-                         "the dielectric step.")
+                         "three Cartesian axes through a centre point — an "
+                         "instantaneous snapshot at RF phase = 0.")
+    ap.add_argument("--pseudo", action="store_true",
+                    help="Plot the time-averaged effective trap potential "
+                         "U_eff = q·V_DC + (q²/4mΩ²)|∇V_RF|² (each RF "
+                         "contribution computed separately) along x, y, z "
+                         "through the centre.  This is the quantity that "
+                         "determines where the particle actually sits.")
     ap.add_argument("--centre", "--center", dest="centre",
                     type=float, nargs=3, default=None,
                     metavar=("X", "Y", "Z"),
@@ -628,14 +904,25 @@ def main():
                     help="Explicit voltages (V) for electrodes 1..10, "
                          "overriding --volts-file/--time.")
     ap.add_argument("--label", default=None,
-                    help="Suffix for the output filename in --total mode "
-                         "(field_total_<label>.png).  Useful for saving "
-                         "before/after-dielectric pairs.")
+                    help="Suffix for the output filename in --total/--pseudo "
+                         "mode (field_total_<label>.png / field_pseudo_<label>.png).  "
+                         "Useful for saving before/after-dielectric pairs.")
+    ap.add_argument("--ylim", type=float, nargs=2, default=None,
+                    metavar=("YMIN", "YMAX"),
+                    help="Fix the y-axis limits in --pseudo mode (eV).  Pair "
+                         "before/after-dielectric runs by passing the same "
+                         "value so the plots are directly comparable.")
+    ap.add_argument("--config", default="trap_config.lua",
+                    help="Lua config to read particle mass and charge from "
+                         "for --pseudo (default: trap_config.lua).")
     args   = ap.parse_args()
     do_3d  = args.show3d or bool(args.screenshot)
 
-    # ── --total mode ─────────────────────────────────────────────────────────
-    if args.total:
+    # ── --total / --pseudo mode share centre + voltages bootstrap ────────────
+    if args.total and args.pseudo:
+        sys.exit("ERROR: --total and --pseudo are mutually exclusive.")
+
+    if args.total or args.pseudo:
         # Centre
         if args.centre is not None:
             centre = tuple(args.centre)
@@ -647,6 +934,33 @@ def main():
                          "Pass --centre X Y Z explicitly.")
             print(f"Optical Paul trap centre (auto): "
                   f"({centre[0]:.3f}, {centre[1]:.3f}, {centre[2]:.3f}) mm")
+
+    if args.pseudo:
+        vpath = os.path.join(BASE, args.volts_file)
+        if not os.path.exists(vpath):
+            sys.exit(f"Voltage file not found: {vpath}")
+        dc, V_RF_amp, V_RF3_amp, t_used = read_voltages_split(vpath, args.time)
+        print(f"Voltages from {args.volts_file} at t={t_used:.0f} µs:")
+        print(f"  RF amplitude (sets 1+2) = {V_RF_amp:+9.3f} V")
+        print(f"  RF amplitude (set 3)    = {V_RF3_amp:+9.3f} V")
+        for n in range(1, 11):
+            print(f"  V_DC[elec {n:2d}] = {dc.get(n, 0.0):+9.3f} V")
+        f_RF, f_RF3 = read_rf_freqs(vpath)
+        if f_RF is None or f_RF3 is None:
+            sys.exit(f"ERROR: {args.volts_file} is missing f_RF_Hz or "
+                     f"f_RF3_Hz metadata comments.")
+        print(f"  f_RF = {f_RF:g} Hz,  f_RF3 = {f_RF3:g} Hz")
+        cfg_path = os.path.join(BASE, args.config)
+        mass_kg, charge_e = read_particle_params(cfg_path)
+        print(f"  particle mass = {mass_kg:.3e} kg,  charge = {charge_e}e")
+        results = compute_pseudo(centre, args.span, dc, V_RF_amp, V_RF3_amp,
+                                 mass_kg, charge_e, f_RF, f_RF3)
+        plot_pseudo(results, centre, args.span, args.label, ylim=args.ylim)
+        plt.show()
+        return
+
+    # ── --total mode ─────────────────────────────────────────────────────────
+    if args.total:
         # Voltages
         if args.voltages is not None:
             voltages = {n + 1: v for n, v in enumerate(args.voltages)}
