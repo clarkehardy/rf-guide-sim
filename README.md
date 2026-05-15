@@ -173,35 +173,19 @@ If the dielectric volumes are not needed for a particular run, stop here and pro
 
 ## 5. Dielectric refinement (lenses + lens holder)
 
+### How SIMION handles dielectrics
+
 SIMION's dielectric solver requires a **separate permittivity array** alongside the standard electric PAs. The dielectric bodies must be absent from the electric PA (they are already omitted from `paulTrap.gem`) and encoded only in this permittivity array.
 
-### Step 1 — Generate the dielectric PA
+### Why the standard refine workflow does not work here
 
-```bash
-~/.venvs/mesh/bin/python3 generate_dielectric_pa.py
-```
+SIMION 8.2's dielectric solver is incompatible with `surface='fractional'`. Without fractional surfaces, SIMION's GEM-to-`pa#` voxelizer marks surface voxels then flood-fills from a seed point. For meshes whose surfaces graze the grid at shallow angles, sub-grid gaps in the marked surface let the flood-fill leak into surrounding free space, marking large regions of the volume as electrode. Repairing the STLs does not fix this — the issue is purely geometric.
 
-This creates `paulTrap-dielectric.pa`. The file assigns ε_r = `EPSILON_GLASS` (defined at the top of the script — currently 3.0, fused-silica-and-PEEK ballpark) to every grid cell whose centre falls inside any of `trapping_lens.stl`, `collection_lens.stl`, or `lens_holder.stl`. All other cells are ε_r = 1.0.
+`rasterize_pa.py` bypasses SIMION's voxelizer entirely. For every grid node it runs `trimesh.contains()` (embreex-backed) against each electrode's STL and stamps the appropriate `pa#` marker. The result has no surface tracking, no flood-fill, and no leak paths. Mesh quality stops mattering as long as `contains()` returns the right answer. The resulting `pa#` can then be loaded back into SIMION, which runs only its relaxation solver on it — no re-voxelization.
 
-**Run this step whenever `EPSILON_GLASS` changes or when the dielectric STL files are updated.**
+Use this workflow only when you need dielectric effects. For everything else, the standard fractional-surface workflow (Section 4) is faster to iterate on and produces sharper electrode surfaces.
 
-### Step 2 — Re-refine electrode PAs with the dielectric
-
-From within SIMION, run `refine_with_dielectric.lua` (File → Run Lua Script, or from the SIMION command line with `--nogui lua`). This re-refines `pa1` through `pa10` incorporating the dielectric permittivity. The fast-adjust system will then work normally.
-
-**Run this step after every standard Refine and after every dielectric PA regeneration.**
-
----
-
-## 5b. Alternative workflow: Python-rasterized pa# (leak-free electrodes for dielectric runs)
-
-SIMION 8.2's dielectric solver is incompatible with `surface='fractional'`, but without fractional surfaces SIMION's GEM-to-`pa#` voxelizer marks surface voxels then flood-fills from a seed. For meshes whose surfaces graze the grid at shallow angles, sub-grid gaps in the marked surface let the flood-fill leak into surrounding free space, marking large regions of the volume as electrode. Repairing the STLs does not fix this — the issue is purely geometric.
-
-`rasterize_pa.py` bypasses SIMION's voxelizer entirely. For every grid node it runs `trimesh.contains()` (embreex-backed) against each electrode's STL and stamps the appropriate `pa#` marker. The result has no surface tracking, no flood-fill, and no leak paths. Mesh quality stops mattering as long as `contains()` returns the right answer.
-
-This is an **alternative** to the standard fractional-surface workflow, not a replacement. Use it for cross-check runs where you want to see the effect of the dielectrics. Use the standard fractional workflow (Sections 4–5) for everything else: it's faster to iterate on and produces sharper electrode surfaces.
-
-### Cross-check workflow
+### Workflow
 
 1. **In SIMION:** load `paulTrap.gem`, click **Refine**. Pick any surface mode; we're about to overwrite the result. This step exists only to set up `paulTrap.pa#` at the grid `dx` you want.
 2. **In SIMION:** `File → Save PA` (`paulTrap.pa#`) and then `File → Close PA` (or `Unload`). SIMION caches PA contents in memory; if you don't unload it, the next step's overwrite on disk won't be picked up.
@@ -216,11 +200,12 @@ This is an **alternative** to the standard fractional-surface workflow, not a re
    cp paulTrap_rasterized.pa#    paulTrap.pa#
    ```
 5. **In SIMION:** `File → Load PA → paulTrap.pa#` (reload). Then click **Refine** again. Because `paulTrap.pa#` already contains electrode markers, SIMION skips voxelization and just runs the relaxation solver, producing leak-free `paulTrap.pa1` through `paulTrap.pa10`.
-6. **Shell:** generate the dielectric PA (unchanged).
+6. **Shell:** build the dielectric permittivity array.
    ```bash
    ~/.venvs/mesh/bin/python3 generate_dielectric_pa.py
    ```
-7. **In SIMION:** run `refine_with_dielectric.lua` (unchanged).
+   This creates `paulTrap-dielectric.pa`, assigning ε_r = `EPSILON_GLASS` (defined at the top of the script — currently 3.0, a fused-silica-and-PEEK ballpark) to every grid cell whose centre falls inside any of `trapping_lens.stl`, `collection_lens.stl`, or `lens_holder.stl`. All other cells are ε_r = 1.0. Re-run this whenever `EPSILON_GLASS` changes or the dielectric STL files are updated.
+7. **In SIMION:** run `refine_with_dielectric.lua` (File → Run Lua Script, or from the SIMION command line with `--nogui lua`). This re-refines `pa1` through `pa10` incorporating the dielectric permittivity. Fast-adjust then works as normal. Re-run this after every standard Refine and after every regeneration of `paulTrap-dielectric.pa`.
 
 ### Verifying
 
@@ -236,7 +221,7 @@ This is an **alternative** to the standard fractional-surface workflow, not a re
 cp paulTrap.pa#.simion-backup paulTrap.pa#
 ```
 
-Then in SIMION: unload the PA, reload it from disk, and Refine normally (the fractional-surface workflow from Sections 4–5).
+Then in SIMION: unload the PA, reload it from disk, and Refine normally (the fractional-surface workflow from Section 4).
 
 ---
 
