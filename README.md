@@ -264,13 +264,35 @@ Set 3 has 4 fully-independent SIMION electrodes; equal-and-opposite DC trims on 
 
 ## 7. Running a simulation in SIMION
 
-1. Load the workbench (`.iob` file) in SIMION. The workbench must have **10 electrode slots** matching the new GEM.
-2. In the **Variables** panel, set:
-   - `voltage_file_number` — integer N matching the `voltages_N.csv` file to use
-   - `run_number` — integer appended to the output trajectory filename
-3. Define ions in the **Particles** panel: mass ≈ 3.19 × 10⁶ u (for 166 nm silica sphere, 100 electron charges), charge = 100. (`paulTrap.lua` overrides these from `trap_config.lua` on every ion, so the values here are placeholders.)
-4. Edit `trap_config.lua` to set particle start positions, triggers, gas, and drag scaling.
-5. Click **Fly'm**.
+### Workbench (`paulTrap.iob`) setup — one-time, must be done in the GUI
+
+The `.iob` file is SIMION-specific and can only be edited inside the SIMION GUI. Everything else in this project lives in plain text and the workbench is the only handoff point. You set it up once and then never touch it.
+
+The workbench must reference:
+
+- The PA file (`paulTrap.pa#`, and the refined `pa1..pa10` it produces). The PA instance's position/orientation in the workbench should be the identity transform — `locate(...)` in the GEM already shifts everything into the right place. The workbench must have **10 electrode slots** matching the new GEM.
+- The FLY2 file (`paulTrap.fly2`).
+- The user program (`paulTrap.lua`).
+- TOF cutoff and trajectory quality. The lua does not set these; if the TOF cutoff is shorter than you need, trajectories are truncated.
+- Initial values for the adjustables `voltage_file_number` and `run_number` (overridden at runtime by `SIMION_VOL_FILE` / `SIMION_RUN_NUM` env vars in `run_simulation.sh`).
+
+### How particle properties are set
+
+Everything about the particles — mass, charge, start position, initial velocity, count, gas, drag — is in `trap_config.lua`. `paulTrap.lua:325-360` overrides the workbench/fly2 values for `ion_mass`, `ion_charge`, `ion_px_mm/py_mm/pz_mm`, and `ion_vx_mm/vy_mm/vz_mm` per-ion before flight starts. Any ions beyond `particles.n` are splatted immediately (`paulTrap.lua:332-334, 450-452`) at no cost.
+
+The **only** field in `paulTrap.fly2` that's actually meaningful is the ion count `n`, which has to be ≥ `particles.n` from `trap_config.lua`. The mass and charge are placeholders.
+
+> **Gotcha** — `paulTrap.fly2` `position = vector(...)` must be a valid free-space point inside the PA volume, even though `segment.initialize()` will overwrite it immediately. SIMION pre-validates the ion against the PA *before* calling `initialize()`, so a placeholder like `vector(0, 0, 0)` either lands outside the grid or inside an electrode marker and the headless fly silently fails. The current value `vector(25, 27.2, 52.5)` corresponds to the loading-trap centre in workbench coords and works fine; if you change it, pick a point you know is in free space at the current `pa_define`/`locate` offsets.
+
+### Running
+
+Headless (recommended) — `run_simulation.sh` regenerates voltages, sets the env vars, launches a `--nogui fly` through CrossOver, and animates the result.
+
+```bash
+./run_simulation.sh --vol 1 --run 1
+```
+
+Interactive (GUI) — load `paulTrap.iob`, set `voltage_file_number` and `run_number` in the Variables panel, edit `trap_config.lua` for the particle/gas/trigger setup, click **Fly'm**.
 
 Trajectories are written to `trajectories_N.csv` in the project directory (Fusion world coordinates). Voltages are read from `voltages_N.csv`.
 
