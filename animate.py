@@ -137,6 +137,38 @@ def compute_geo(base=BASE):
 
 GEO = compute_geo()
 
+
+def compute_trap_bounds(geo=GEO):
+    """Return the interior bounding box of the optical Paul trap, or None.
+
+    z : endcap-centre to endcap-centre (falls back to rod_z_set3 span).
+    y : between the inner faces of the top and bottom set-3 rods.
+    x : between the inner faces of the left and right set-3 rods.
+    """
+    z_u = geo["endcap_optical_U_z"]
+    z_d = geo["endcap_optical_D_z"]
+    if z_u is None or z_d is None:
+        zspan = geo["rod_z_set3"]
+        if zspan is None:
+            return None
+        z_lo, z_hi = zspan
+    else:
+        z_lo, z_hi = min(z_u, z_d), max(z_u, z_d)
+
+    yt = geo["rod_y_top_3"]    # (ymin, ymax) — inner face is yt[0]
+    yb = geo["rod_y_bot_3"]    # (ymin, ymax) — inner face is yb[1]
+    xl = geo["rod_x_left_3"]   # (xmin, xmax) — inner face is xl[1]
+    xr = geo["rod_x_right_3"]  # (xmin, xmax) — inner face is xr[0]
+    if None in (yt, yb, xl, xr):
+        return None
+
+    return dict(
+        z_lo=z_lo, z_hi=z_hi,
+        y_lo=min(yb[1], yt[0]), y_hi=max(yb[1], yt[0]),
+        x_lo=min(xl[1], xr[0]), x_hi=max(xl[1], xr[0]),
+    )
+
+
 # ── I/O ───────────────────────────────────────────────────────────────────────
 
 def load_trajectories(path):
@@ -317,7 +349,7 @@ def draw_geometry(ax, view="side", triggers=(), trig_colors=()):
     ax.set_xlabel("Z (mm)")
     ax.set_ylabel(vert_label)
     ax.set_title(title)
-    ncol = 4 + len(triggers)
+    ncol = 3 + len(triggers)
     ax.legend(loc="lower left", fontsize=7, ncol=ncol, framealpha=0.8)
 
 
@@ -423,15 +455,16 @@ def main():
         va="top", ha="right", fontsize=9,
         bbox=dict(boxstyle="round,pad=0.25", fc="white", alpha=0.75))
 
-    # Precompute the first time each ion crosses Z = 200 mm (Fusion world).
-    GAP_THRESHOLD_Z = 200.0
-    for ax in (ax_xz, ax_yz):
-        ax.axvline(GAP_THRESHOLD_Z, color="gray", lw=0.8, ls="--", alpha=0.5)
-
-    crossing_t = {}
-    for iid, data in ions.items():
-        crossed = np.where(data["z"] >= GAP_THRESHOLD_Z)[0]
-        crossing_t[iid] = data["t"][crossed[0]] if len(crossed) else np.inf
+    # Precompute which ions terminate inside the optical Paul trap.
+    _tb = compute_trap_bounds()
+    trap_end_t = {}   # iid → time of last trajectory point, for ions that end in trap
+    if _tb is not None:
+        for iid, data in ions.items():
+            xf, yf, zf = data["x"][-1], data["y"][-1], data["z"][-1]
+            if (_tb["z_lo"] <= zf <= _tb["z_hi"] and
+                    _tb["y_lo"] <= yf <= _tb["y_hi"] and
+                    _tb["x_lo"] <= xf <= _tb["x_hi"]):
+                trap_end_t[iid] = data["t"][-1]
 
     n_total = len(ions)
     gap_label = ax_xz.text(
@@ -528,7 +561,7 @@ def main():
         ax_bot.set_xlabel("Time (µs)")
         ax_bot.set_ylabel("Voltage (V)")
         ax_bot.set_title("Electrode voltages")
-        ax_bot.legend(loc="upper right", fontsize=8, ncol=2)
+        ax_bot.legend(loc="upper right", fontsize=8, ncol=4)
         ax_bot.grid(True, alpha=0.25)
 
     # ── Animation ─────────────────────────────────────────────────────────────
@@ -550,8 +583,8 @@ def main():
                 dots_xz[iid].set_data([], [])
                 dots_yz[iid].set_data([], [])
 
-        n_crossed = sum(1 for ct in crossing_t.values() if ct <= t)
-        gap_label.set_text(f"Fraction crossed:  {n_crossed}/{n_total}")
+        n_trapped = sum(1 for end_t in trap_end_t.values() if end_t <= t)
+        gap_label.set_text(f"Trapped:  {n_trapped}/{n_total}")
 
         if vcursor is not None:
             vcursor.set_xdata([t, t])
