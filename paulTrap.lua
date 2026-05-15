@@ -452,10 +452,10 @@ function segment.fast_adjust()
   -- TL + BR get +RF phase; TR + BL get -RF phase.
   local amp3  = #_v_rf3 > 0 and _interp(_vt, _v_rf3, t) or _V0_3_default
   local V_RF3 = amp3 * math.cos(_rf_omega_3 * t)
-  local dcTL  = #_v_dc_TL > 0 and _interp(_vt, _v_dc_TL, t) or 0
-  local dcTR  = #_v_dc_TR > 0 and _interp(_vt, _v_dc_TR, t) or 0
-  local dcBL  = #_v_dc_BL > 0 and _interp(_vt, _v_dc_BL, t) or 0
-  local dcBR  = #_v_dc_BR > 0 and _interp(_vt, _v_dc_BR, t) or 0
+  local dcTL  = _volt_dc(5, t, _v_dc_TL)
+  local dcTR  = _volt_dc(6, t, _v_dc_TR)
+  local dcBL  = _volt_dc(7, t, _v_dc_BL)
+  local dcBR  = _volt_dc(8, t, _v_dc_BR)
   adj_elect[5] =  V_RF3 + dcTL   -- rod_3_TL
   adj_elect[6] = -V_RF3 + dcTR   -- rod_3_TR
   adj_elect[7] = -V_RF3 + dcBL   -- rod_3_BL

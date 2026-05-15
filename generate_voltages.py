@@ -48,6 +48,8 @@ ap.add_argument("--no-preview", action="store_true",
 _args = ap.parse_args()
 OUT_NUMBER = _args.out
 
+skip_loading = False
+
 # ── RF parameters ─────────────────────────────────────────────────────────────
 f_RF  = 2e3          # Hz — carrier frequency, sets 1 + 2 (loading + RF guide)
 
@@ -58,7 +60,7 @@ f_RF3 = 2e3            # Hz — PLACEHOLDER
 
 # ── Time base ─────────────────────────────────────────────────────────────────
 max_time = 2e5
-times    = np.linspace(0, max_time, 100_000)
+times    = np.linspace(0, max_time, 1000)
 
 # ── Sets 1 + 2 RF amplitude envelope ──────────────────────────────────────────
 # V_RF sets the zero-to-peak amplitude of the loading + RF guide quadrupole.
@@ -71,6 +73,10 @@ V_RF = 10 * np.ones_like(times)
 # ── Load Paul trap endcaps ────────────────────────────────────────────────────
 V_endcap_load_U = 10 * np.ones_like(times)
 V_endcap_load_D = -10 * np.ones_like(times)
+
+if skip_loading:
+    V_endcap_load_D = np.zeros_like(times)
+    V_endcap_load_D = 10 * np.ones_like(times)
 
 # ── Set 3 (optical Paul trap) ─────────────────────────────────────────────────
 # PLACEHOLDER: set V_RF3 to the trapping amplitude for the wider Paul trap.
@@ -102,8 +108,15 @@ times_trig    = np.arange(0, max_time_trig + dt_trig / 2, dt_trig)
 # Add or remove entries to match the electrodes listed in trap_config.lua triggers.
 V_e9_trig  = 20 * np.ones_like(times_trig)   # endcap_optical_U
 V_e10_trig = 20 * np.ones_like(times_trig)   # endcap_optical_D
-V_e4_trig  = -10 * np.ones_like(times_trig)
-V_e4_trig[times_trig > 1e3] = 10
+V_e4_trig  = V_endcap_load_D[-1] * np.ones_like(times_trig)
+V_e4_trig[times_trig > 2e2] = 0
+
+# Per-rod DC trims after trigger 2 fires (time since trigger, same axis as above).
+# Before trigger 2, each rod uses the main-schedule V_dc_3_XX value.
+V_e5_trig = np.zeros_like(times_trig)   # rod_3_TL DC trim
+V_e6_trig = np.zeros_like(times_trig)   # rod_3_TR DC trim
+V_e7_trig = np.zeros_like(times_trig)   # rod_3_BL DC trim
+V_e8_trig = np.zeros_like(times_trig)   # rod_3_BR DC trim
 
 # ── Assemble schedule ─────────────────────────────────────────────────────────
 COLUMNS = [
@@ -121,9 +134,13 @@ COLUMNS = [
 ]
 TRIG_COLUMNS = [
     ("time_trig_us", times_trig),
-    ("V_e4_trig", V_e4_trig),    # endcap_load_D - triggered
-    ("V_e9_trig",    V_e9_trig),    # endcap_optical_U — triggered
-    ("V_e10_trig",   V_e10_trig),   # endcap_optical_D — triggered
+    ("V_e4_trig",  V_e4_trig),    # endcap_load_D — triggered
+    ("V_e5_trig",  V_e5_trig),    # rod_3_TL DC trim — triggered
+    ("V_e6_trig",  V_e6_trig),    # rod_3_TR DC trim — triggered
+    ("V_e7_trig",  V_e7_trig),    # rod_3_BL DC trim — triggered
+    ("V_e8_trig",  V_e8_trig),    # rod_3_BR DC trim — triggered
+    ("V_e9_trig",  V_e9_trig),    # endcap_optical_U — triggered
+    ("V_e10_trig", V_e10_trig),   # endcap_optical_D — triggered
     # To trigger electrode 3 (endcap_load_U): add ("V_e3_trig", V_e3_trig) here
     # and define V_e3_trig = ... above, and add electrode 3 to a trigger in trap_config.lua.
 ]
@@ -184,15 +201,23 @@ try:
     ax2.set_title("Optical Paul trap (set 3 rods)")
     ax2.legend(fontsize=8, ncol=4)
     ax2.grid(True, alpha=0.3)
-    ax3.step(times_trig, V_e4_trig, where="post", color="seagreen", lw=1.5, ls="--",
-             label="V_e4_trig (endcap_load_D)")
-    ax3.step(times_trig, V_e9_trig,  where="post", color="seagreen", lw=1.5,
+    ax3.step(times_trig, V_e4_trig,  where="post", color="seagreen",  lw=1.5, ls="--",
+             label="V_e4_trig  (endcap_load_D)")
+    ax3.step(times_trig, V_e5_trig,  where="post", color="steelblue", lw=1.2,
+             label="V_e5_trig  (rod_3_TL DC)")
+    ax3.step(times_trig, V_e6_trig,  where="post", color="steelblue", lw=1.2, ls="--",
+             label="V_e6_trig  (rod_3_TR DC)")
+    ax3.step(times_trig, V_e7_trig,  where="post", color="navy",      lw=1.2,
+             label="V_e7_trig  (rod_3_BL DC)")
+    ax3.step(times_trig, V_e8_trig,  where="post", color="navy",      lw=1.2, ls="--",
+             label="V_e8_trig  (rod_3_BR DC)")
+    ax3.step(times_trig, V_e9_trig,  where="post", color="seagreen",  lw=1.5,
              label="V_e9_trig  (endcap_optical_U)")
-    ax3.step(times_trig, V_e10_trig, where="post", color="seagreen", lw=1.5, ls="--",
+    ax3.step(times_trig, V_e10_trig, where="post", color="seagreen",  lw=1.5, ls=":",
              label="V_e10_trig (endcap_optical_D)")
     ax3.set_xlabel("Time since trigger (µs)")
     ax3.set_ylabel("Voltage (V)")
-    ax3.set_title(f"Post-trigger pulse — electrodes 9, 10  ({dt_trig} µs steps, {max_time_trig} µs total)")
+    ax3.set_title(f"Post-trigger schedule — electrodes 4–10  ({dt_trig} µs steps, {max_time_trig} µs total)")
     ax3.legend(fontsize=8)
     ax3.grid(True, alpha=0.3)
 

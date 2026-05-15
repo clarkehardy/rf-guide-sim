@@ -18,7 +18,7 @@ return {
   -- Comment out this block (or omit `pressure_ramp` entirely) to keep
   -- pressure constant at pressure_pa for the whole simulation.
   pressure_ramp = {
-    trigger     = 1,        -- index into the `triggers` list below
+    trigger     = 2,        -- index into the `triggers` list below
     P_final_pa  = 100.0,    -- target pressure [Pa]  (100 Pa = 1 mbar)
     duration_us = 5e5,      -- linear ramp duration [µs]
   },
@@ -31,7 +31,7 @@ return {
   drag_scale     = 1.0,   -- multiply Epstein drag rate; 0 disables drag (and noise)
   langevin_noise = true,  -- thermal noise paired with drag (fluctuation-dissipation);
                           -- set false to recover deterministic drag-only behaviour
-  v_stop_mm_us   = 1e-5,  -- terminate ion when speed < this [mm/us]; 0 to disable
+  v_stop_mm_us   = 1e-6,  -- terminate ion when speed < this [mm/us]; 0 to disable
   record_stride  = 20,    -- write trajectory row every N time steps; 0 to disable
 
   -- ── Coordinate offsets: GEM → Fusion world (mm) ──────────────────────────
@@ -52,7 +52,9 @@ return {
   -- the new geometry travel in -Z, so threshold should fire as the particle
   -- decelerates into the optical-trap volume.
   triggers = {
-    { z_mm = 272.0, electrodes = {9, 10} },  -- PLACEHOLDER z_mm
+    { z_mm = -83.52, electrodes = {4} },     -- Trigger 1: flip the sign on the 
+                                             -- downstream endcap to shoot the particles
+    { z_mm = 272.0, electrodes = {5, 6, 7, 8, 9, 10} },  -- Trigger 2: switch rod DC trims + turn on optical trap endcaps
   },
 
   -- ── Particle definitions ──────────────────────────────────────────────────
@@ -65,12 +67,12 @@ return {
   -- sigma_mm:  Gaussian 1-σ spread per axis {x,y,z} in mm; omit or zero for point source
   -- Multiple starts entries are assigned round-robin by ion number.
   particles = {
-    n      = 20,
+    n      = 5,
     charge = 100,
     starts = {
       -- PLACEHOLDER: set start position to inside the loading Paul trap (sets 1+2),
       -- between endcap_load_U (+z) and endcap_load_D (-z).  Coordinates are Fusion world (mm).
-      { x_mm = 0, y_mm = 19, z_mm = -79.5, ke_ev = 0, -- -79.5
+      { x_mm = 0, y_mm = 19, z_mm = -98.12, ke_ev = 0, -- -79.5, -98.12
         sigma_mm = { x = 0, y = 0, z = 0.1 } },
     },
   },
