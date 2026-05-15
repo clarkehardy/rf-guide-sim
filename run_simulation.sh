@@ -65,8 +65,9 @@ cleanup_trj() {
   shopt -u nullglob
   # bash 3.2-compatible "is this file in the before-snapshot?" check via
   # substring match.  trj<hex>.tmp filenames contain no spaces, so the
-  # space-padded match is safe.
-  local before_str=" ${TRJ_BEFORE[*]} "
+  # space-padded match is safe.  The `:-` default keeps `set -u` happy
+  # when the snapshot is empty (the usual case after a successful run).
+  local before_str=" ${TRJ_BEFORE[*]:-} "
   local removed=0
   for f in "${after[@]}"; do
     if [[ "$before_str" != *" $f "* ]]; then
