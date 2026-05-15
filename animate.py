@@ -163,11 +163,7 @@ def load_trajectories(path):
 def load_voltages(path):
     if not os.path.exists(path):
         return None
-    known = {"time_us", "V_RF", "V_RF3",
-             "V_endcap_load_U", "V_endcap_load_D",
-             "V_dc_3_TL", "V_dc_3_TR", "V_dc_3_BL", "V_dc_3_BR",
-             "V_endcap_optical_U", "V_endcap_optical_D"}
-    cols = {k: [] for k in known}
+    cols = None
     headers = None
     with open(path) as f:
         for line in f:
@@ -177,18 +173,21 @@ def load_voltages(path):
             parts = [p.strip() for p in line.split(",")]
             if headers is None:
                 try:
-                    float(parts[0])   # data row — no header present
+                    float(parts[0])
                 except ValueError:
-                    headers = parts   # this is the column-name header
+                    headers = parts
+                    cols = {h: [] for h in headers}
                     continue
-            if headers is None:
+            if cols is None:
                 continue
             for col, val in zip(headers, parts):
-                if col in cols:
+                if val:
                     try:
                         cols[col].append(float(val))
                     except ValueError:
                         pass
+    if cols is None:
+        return None
     return {k: np.array(v) for k, v in cols.items()}
 
 
@@ -355,6 +354,14 @@ def main():
     if triggers and not ions:
         fire_times = [None] * len(triggers)
 
+    elec_to_fire    = {}
+    triggered_elecs = set()
+    for trig, t_fire in zip(triggers, fire_times):
+        for en in trig['electrodes']:
+            triggered_elecs.add(en)
+            if t_fire is not None:
+                elec_to_fire[en] = t_fire
+
     if not ions:
         sys.exit("No trajectory data found — run a SIMION simulation first.")
 
@@ -435,27 +442,72 @@ def main():
     # ── Voltage panel (DC electrodes + RF amplitude) ──────────────────────────
     vcursor = None
     if has_volt:
-        vt = volts["time_us"]
+        vt     = volts.get("time_us",      np.array([]))
+        vt_tr  = volts.get("time_trig_us", np.array([]))
+
+        def _clamp(t_arr, v_arr):
+            """Extend a step trace to t_max by repeating the last value."""
+            if not len(t_arr):
+                return t_arr, v_arr
+            if t_arr[-1] < t_max:
+                return np.append(t_arr, t_max), np.append(v_arr, v_arr[-1])
+            return t_arr, v_arr
+
+        def build_trace(key_main, elec_num):
+            """Return (t, v) arrays for one DC electrode, handling trigger + clamping."""
+            v_main  = volts.get(key_main, np.array([]))
+            v_trig  = volts.get(f"V_e{elec_num}_trig", np.array([]))
+
+            if elec_num not in triggered_elecs:
+                # Electrode is never gated — follow main schedule, clamped.
+                if not len(v_main):
+                    return None
+                return _clamp(vt, v_main)
+
+            t_fire = elec_to_fire.get(elec_num)
+            if t_fire is None:
+                # Trigger defined but never fired — electrode stays at 0 V.
+                return np.array([t_min, t_max]), np.array([0.0, 0.0])
+
+            # Before fire: 0 V.
+            t_pre = np.array([t_min, t_fire])
+            v_pre = np.array([0.0, 0.0])
+
+            # After fire: use post-trigger schedule if available, else main schedule.
+            if len(vt_tr) > 0 and len(v_trig) > 0:
+                t_post, v_post = _clamp(t_fire + vt_tr, v_trig)
+            elif len(vt) > 0 and len(v_main) > 0:
+                t_post, v_post = _clamp(vt, v_main)
+            else:
+                return np.array([t_min, t_max]), np.array([0.0, 0.0])
+
+            return np.concatenate([t_pre, t_post]), np.concatenate([v_pre, v_post])
+
         volt_style = {
-            "V_endcap_load_U":    ("teal",       "-",            "Load endcap U (3)  [DC]"),
-            "V_endcap_load_D":    ("teal",       "--",           "Load endcap D (4)  [DC]"),
-            "V_dc_3_TL":          ("steelblue",  (0,(5,2)),      "Rod 3 TL DC (5)"),
-            "V_dc_3_TR":          ("steelblue",  (0,(5,2,1,2)),  "Rod 3 TR DC (6)"),
-            "V_dc_3_BL":          ("navy",       (0,(5,2)),      "Rod 3 BL DC (7)"),
-            "V_dc_3_BR":          ("navy",       (0,(5,2,1,2)),  "Rod 3 BR DC (8)"),
-            "V_endcap_optical_U": ("seagreen",   "-",            "Optical endcap U (9)  [DC]"),
-            "V_endcap_optical_D": ("seagreen",   "--",           "Optical endcap D (10) [DC]"),
+            "V_endcap_load_U":    (3,  "teal",       "-",            "Load endcap U (3)  [DC]"),
+            "V_endcap_load_D":    (4,  "teal",       "--",           "Load endcap D (4)  [DC]"),
+            "V_dc_3_TL":          (5,  "steelblue",  (0,(5,2)),      "Rod 3 TL DC (5)"),
+            "V_dc_3_TR":          (6,  "steelblue",  (0,(5,2,1,2)),  "Rod 3 TR DC (6)"),
+            "V_dc_3_BL":          (7,  "navy",       (0,(5,2)),      "Rod 3 BL DC (7)"),
+            "V_dc_3_BR":          (8,  "navy",       (0,(5,2,1,2)),  "Rod 3 BR DC (8)"),
+            "V_endcap_optical_U": (9,  "seagreen",   "-",            "Optical endcap U (9)  [DC]"),
+            "V_endcap_optical_D": (10, "seagreen",   "--",           "Optical endcap D (10) [DC]"),
         }
-        for key, (color, ls, label) in volt_style.items():
-            if key in volts and len(volts[key]):
-                ax_bot.step(vt, volts[key], where="post",
+        for key, (en, color, ls, label) in volt_style.items():
+            result = build_trace(key, en)
+            if result is not None:
+                t_tr, v_tr = result
+                ax_bot.step(t_tr, v_tr, where="post",
                             color=color, ls=ls, lw=1.5, label=label)
+
         if has_rf:
-            ax_bot.step(vt, volts["V_RF"], where="post",
+            t_rf, v_rf = _clamp(vt, volts["V_RF"])
+            ax_bot.step(t_rf, v_rf, where="post",
                         color="crimson", lw=1.5, ls=(0, (3, 1, 1, 1)),
                         label="Sets 1+2 RF amplitude V₀")
         if has_rf3:
-            ax_bot.step(vt, volts["V_RF3"], where="post",
+            t_rf3, v_rf3 = _clamp(vt, volts["V_RF3"])
+            ax_bot.step(t_rf3, v_rf3, where="post",
                         color="darkorange", lw=1.5, ls=(0, (3, 1, 1, 1)),
                         label="Set 3 RF amplitude V₀")
 
