@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# run_simulation.sh — full pipeline: generate voltages → SIMION fly → animate
+# run_simulation.sh — full pipeline: generate voltages → SIMION fly → animate → visualize
 #
 # Usage:
 #   ./run_simulation.sh                        # voltages_1.csv, trajectories_1.csv
 #   ./run_simulation.sh --vol 2 --run 3        # voltages_2.csv, trajectories_3.csv
 #   ./run_simulation.sh --no-animate           # skip the animation window
+#   ./run_simulation.sh --no-visualize         # skip the 3-D visualize window
 #   ./run_simulation.sh --preview-voltages     # show the voltage preview plot
 #   ./run_simulation.sh --keep-tmp             # don't delete SIMION's trj*.tmp scratch files
 #
@@ -26,6 +27,7 @@ IOB='C:\users\crossover\Documents\Research\Nanospheres\SIMION\RF Guide\paulTrap.
 VOL_FILE=1
 RUN_NUM=1
 ANIMATE=1
+VISUALIZE=1
 PREVIEW_VOLTAGES=0
 KEEP_TMP=0
 
@@ -40,6 +42,7 @@ while [[ $# -gt 0 ]]; do
     --vol)             VOL_FILE=$2;      shift 2 ;;
     --run)             RUN_NUM=$2;       shift 2 ;;
     --no-animate)      ANIMATE=0;        shift   ;;
+    --no-visualize)    VISUALIZE=0;      shift   ;;
     --preview-voltages) PREVIEW_VOLTAGES=1; shift ;;
     --keep-tmp)        KEEP_TMP=1;       shift   ;;
     -h|--help)         usage ;;
@@ -104,6 +107,18 @@ if [[ $ANIMATE -eq 1 ]]; then
   VOLT="$DIR/voltages_${VOL_FILE}.csv"
   if [[ -f "$TRAJ" ]]; then
     "$PYTHON" "$DIR/animate.py" --traj "$TRAJ" --volt "$VOLT"
+  else
+    echo "WARNING: trajectory file not found: $TRAJ"
+  fi
+fi
+
+# ── Step 4: Visualize (3-D) ───────────────────────────────────────────────────
+if [[ $VISUALIZE -eq 1 ]]; then
+  echo ""
+  echo "── Step 4: Visualize"
+  TRAJ="$DIR/trajectories_${RUN_NUM}.csv"
+  if [[ -f "$TRAJ" ]]; then
+    "$PYTHON" "$DIR/visualize.py" --traj "$TRAJ"
   else
     echo "WARNING: trajectory file not found: $TRAJ"
   fi
