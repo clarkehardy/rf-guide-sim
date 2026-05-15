@@ -132,7 +132,7 @@ end
 -- Returns the voltage for DC electrode `en` at absolute time `t_abs`.
 -- Handles three cases uniformly:
 --   • Not triggered (_trig_for_electrode[en] nil): main schedule, absolute t.
---   • Triggered, not yet fired: 0 V (gated).
+--   • Triggered, not yet fired: main schedule, absolute t.
 --   • Triggered, fired: post-trigger schedule (V_e{N}_trig column) if loaded,
 --     else main schedule, both using time-since-fire as the lookup key.
 local function _volt_dc(en, t_abs, v_main)
@@ -140,7 +140,7 @@ local function _volt_dc(en, t_abs, v_main)
     return #v_main > 0 and _interp(_vt, v_main, t_abs) or 0
   end
   local t_rel = _trig_t(en, t_abs)
-  if not t_rel then return 0 end
+  if not t_rel then return #v_main > 0 and _interp(_vt, v_main, t_abs) or 0 end
   local v_pt = _v_trig[en]
   if v_pt and #v_pt > 0 then return _interp(_vt_trig, v_pt, t_rel) end
   return #v_main > 0 and _interp(_vt, v_main, t_rel) or 0
