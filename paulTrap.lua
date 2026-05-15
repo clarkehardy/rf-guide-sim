@@ -32,6 +32,8 @@ local gamma_drag     = 0.0              -- Epstein drag rate at baseline pressur
 local _gamma_per_pa  = 0.0              -- drag rate per Pa of gas pressure [µs⁻¹ Pa⁻¹]
 local _P_baseline    = 0.0              -- baseline gas pressure [Pa]
 local _drag_scale    = 1.0
+local _kT_over_m     = 0.0              -- kB*T/m_p in (m/s)², for Langevin noise amplitude
+local _langevin_on   = true             -- thermal noise paired with Epstein drag (F-D theorem)
 local _v_stop        = 1e-5             -- [mm/µs]
 local _record_stride = 20
 local _gem_off       = {x=25.0, y=8.0, z=132.0}  -- GEM → Fusion offsets [mm]
@@ -158,6 +160,8 @@ function segment.initialize_run()
   _gamma_per_pa = (8 * math.pi / 3) * r_p^2 / (m_p * c_bar) * 1e-6  -- µs⁻¹ Pa⁻¹
   _P_baseline   = P_gas
   gamma_drag    = _gamma_per_pa * P_gas   -- baseline rate for logging
+  _kT_over_m    = kB * T_gas / m_p        -- (m/s)², fixed for the run (T doesn't ramp)
+  _langevin_on  = cfg.langevin_noise ~= false  -- default true; set false to disable noise
 
   simion.print(string.format(
     "Config:  P=%.3f Pa,  T=%.0f K,  M_gas=%.0f amu\n",
@@ -168,6 +172,10 @@ function segment.initialize_run()
   simion.print(string.format(
     "         gamma=%.4e us^-1 (at baseline P),  drag_scale=%.1f\n",
     gamma_drag, _drag_scale))
+  simion.print(string.format(
+    "         Langevin noise: %s  (v_rms_1D = %.2e mm/us at baseline P)\n",
+    _langevin_on and "on" or "off",
+    math.sqrt(_kT_over_m) * 1e-3))
 
   -- ── Pressure ramp (triggered) ────────────────────────────────────────────
   local pr = cfg.pressure_ramp
@@ -450,6 +458,20 @@ function segment.other_actions()
   if ion_number > _particle_count then
     ion_splat = 1
     return
+  end
+
+  -- Langevin thermal noise: stochastic velocity kick, one per time step.
+  -- σ² = (kB·T/m)·(1 − exp(−2·γ·dt)) is the exact OU fluctuation-dissipation
+  -- complement to the deterministic drag applied in accel_adjust.
+  if _langevin_on and _drag_scale > 0 and ion_time_step > 0 then
+    local g  = _drag_scale * _gamma_per_pa * _current_pressure()
+    local dt = ion_time_step
+    if g * dt > 1e-12 then
+      local sigma = math.sqrt(_kT_over_m * (1 - math.exp(-2 * g * dt))) * 1e-3
+      ion_vx_mm = ion_vx_mm + sigma * _randn()
+      ion_vy_mm = ion_vy_mm + sigma * _randn()
+      ion_vz_mm = ion_vz_mm + sigma * _randn()
+    end
   end
 
   -- Speed-based termination

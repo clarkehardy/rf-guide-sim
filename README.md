@@ -6,8 +6,8 @@ SIMION 8.2 particle-trajectory simulation of 166 nm silica nanospheres through a
 
 ```
 paulTrap.gem                 SIMION geometry definition (10 electrodes + PA dimensions)
-paulTrap.lua                 User program: RF fast-adjust, Epstein drag, gravity,
-                             trajectory recording
+paulTrap.lua                 User program: RF fast-adjust, Langevin dynamics (Epstein
+                             drag + thermal noise), gravity, trajectory recording
 trap_config.lua              Gas, particle, drag, trigger, and start-position config
 generate_voltages.py         Write voltage schedule CSV for all 10 electrodes
 generate_dielectric_pa.py    Build the dielectric permittivity array for the lenses
@@ -301,10 +301,11 @@ Trajectories are written to `trajectories_N.csv` in the project directory (Fusio
 - **RF fast-adjust**: electrodes 1, 2 driven analytically at `f_RF`; electrodes 5–8 at `f_RF3` (diagonal-pair phasing: TL+BR get +V_RF3, TR+BL get −V_RF3).
 - **DC schedule**: electrodes 3, 4, 5–8 (DC trim part), 9, 10 interpolated from the voltage CSV.
 - **Triggers**: only electrodes 9, 10 (optical endcaps) are gated; they sit at 0 V until the ion's Fusion-z crosses the threshold in `trap_config.lua`, then follow the schedule from t=0 of trigger-fire.
-- **Epstein drag** (free-molecular regime, Kn ≈ 800 at 1 mbar): `β = (8π/3) r² P / c̄`; damping rate `γ = β / m`. Linear in pressure, so γ is recomputed each timestep from the current pressure.
+- **Langevin dynamics** (full, not just drag): `accel_adjust` applies the deterministic half of the Ornstein-Uhlenbeck propagator — Epstein drag with finite-timestep correction factor `(1 − exp(−γ·dt))/(γ·dt)`. `other_actions` adds the matching stochastic velocity kick each time step, drawn from σ² = (k_B T/m)·(1 − exp(−2γ·dt)). Together these satisfy the fluctuation-dissipation theorem, so particles equilibrate to a Maxwell-Boltzmann distribution at the gas temperature. Setting `langevin_noise = false` in `trap_config.lua` reverts to deterministic drag only. Setting `drag_scale = 0` disables both halves.
+  - **Epstein drag** (free-molecular regime, Kn ≈ 800 at 1 mbar): `β = (8π/3) r² P / c̄`; damping rate `γ = β / m`. Linear in pressure, so γ is recomputed each timestep from the current pressure.
+  - For our 166 nm silica sphere at 293 K, equilibrium per-axis `v_rms = √(k_B T/m) ≈ 2.8 × 10⁻⁵ mm/µs`, well above the `v_stop_mm_us = 1e-5` floor.
 - **Triggered pressure ramp**: optional `pressure_ramp` block in `trap_config.lua` models a solenoid valve opening when a named trigger fires (per-ion). Pressure ramps linearly from `pressure_pa` to `P_final_pa` over `duration_us`; before the trigger fires the pressure stays at the baseline.
 - **Gravity** in −Y (9.81 × 10⁻⁹ mm/µs²).
-- **Finite-timestep drag correction** to avoid underestimating drag over long steps.
 
 ---
 

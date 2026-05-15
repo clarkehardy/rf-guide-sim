@@ -20,7 +20,7 @@ return {
   pressure_ramp = {
     trigger     = 1,        -- index into the `triggers` list below
     P_final_pa  = 100.0,    -- target pressure [Pa]  (100 Pa = 1 mbar)
-    duration_us = 5e4,      -- linear ramp duration [µs]
+    duration_us = 5e5,      -- linear ramp duration [µs]
   },
 
   -- ── Particle ─────────────────────────────────────────────────────────────
@@ -28,9 +28,11 @@ return {
   particle_density_kgm3 = 2200,   -- kg/m³  (fused silica)
 
   -- ── Drag / termination / recording ───────────────────────────────────────
-  drag_scale   = 1.0,   -- multiply Epstein drag rate; 0 disables drag
-  v_stop_mm_us = 1e-5,  -- terminate ion when speed < this [mm/us]; 0 to disable
-  record_stride = 20,   -- write trajectory row every N time steps; 0 to disable
+  drag_scale     = 1.0,   -- multiply Epstein drag rate; 0 disables drag (and noise)
+  langevin_noise = true,  -- thermal noise paired with drag (fluctuation-dissipation);
+                          -- set false to recover deterministic drag-only behaviour
+  v_stop_mm_us   = 1e-5,  -- terminate ion when speed < this [mm/us]; 0 to disable
+  record_stride  = 20,    -- write trajectory row every N time steps; 0 to disable
 
   -- ── Coordinate offsets: GEM → Fusion world (mm) ──────────────────────────
   -- Must match the locate(tx, ty, tz) block in paulTrap.gem.
