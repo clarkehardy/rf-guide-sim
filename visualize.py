@@ -245,10 +245,11 @@ def render_flythrough(plotter, output_path, fps=30, duration=10.0,
 
     view_up = [0.0, 1.0, 0.0]
 
-    # Output writer
+    # Output writer.  Higher movie quality (default 5) is barely-acceptable at
+    # HD; 7 gives clean trajectory lines without ballooning the file size.
     ext = os.path.splitext(output_path)[1].lower()
     if ext in (".mp4", ".mov", ".avi"):
-        plotter.open_movie(output_path, framerate=fps)
+        plotter.open_movie(output_path, framerate=fps, quality=7)
     elif ext == ".gif":
         plotter.open_gif(output_path, fps=fps)
     else:
@@ -309,6 +310,12 @@ def main():
                     help="Orbit radius around the optical trap in mm (default: 50)")
     ap.add_argument("--orbit-height", type=float, default=100.0,
                     help="Orbit height above the trap axis in mm (default: 100)")
+    ap.add_argument("--resolution", type=int, nargs=2, default=None,
+                    metavar=("WIDTH", "HEIGHT"),
+                    help="Render resolution in pixels.  Default: 1920 1080 "
+                         "for --animation, otherwise PyVista's default "
+                         "(1024×768).  Use e.g. 2560 1440 for QHD or "
+                         "3840 2160 for 4K.")
     ap.add_argument("--cmap", default="plasma",
                     help="Matplotlib colormap name for time coloring (default: plasma)")
     args = ap.parse_args()
@@ -316,6 +323,13 @@ def main():
     off_screen = bool(args.screenshot) or bool(args.animation)
     plotter = pv.Plotter(off_screen=off_screen, title="Paul Trap — RF Guide")
     plotter.set_background("white")
+
+    # Window / render resolution.  Explicit --resolution wins; otherwise the
+    # animation mode defaults to HD and other modes keep PyVista's default.
+    if args.resolution is not None:
+        plotter.window_size = list(args.resolution)
+    elif args.animation:
+        plotter.window_size = [1920, 1080]
 
     print("Loading electrodes…")
     load_electrodes(plotter)
