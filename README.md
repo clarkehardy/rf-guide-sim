@@ -193,6 +193,53 @@ From within SIMION, run `refine_with_dielectric.lua` (File → Run Lua Script, o
 
 ---
 
+## 5b. Alternative workflow: Python-rasterized pa# (leak-free electrodes for dielectric runs)
+
+SIMION 8.2's dielectric solver is incompatible with `surface='fractional'`, but without fractional surfaces SIMION's GEM-to-`pa#` voxelizer marks surface voxels then flood-fills from a seed. For meshes whose surfaces graze the grid at shallow angles, sub-grid gaps in the marked surface let the flood-fill leak into surrounding free space, marking large regions of the volume as electrode. Repairing the STLs does not fix this — the issue is purely geometric.
+
+`rasterize_pa.py` bypasses SIMION's voxelizer entirely. For every grid node it runs `trimesh.contains()` (embreex-backed) against each electrode's STL and stamps the appropriate `pa#` marker. The result has no surface tracking, no flood-fill, and no leak paths. Mesh quality stops mattering as long as `contains()` returns the right answer.
+
+This is an **alternative** to the standard fractional-surface workflow, not a replacement. Use it for cross-check runs where you want to see the effect of the dielectrics. Use the standard fractional workflow (Sections 4–5) for everything else: it's faster to iterate on and produces sharper electrode surfaces.
+
+### Cross-check workflow
+
+1. **In SIMION:** load `paulTrap.gem`, click **Refine**. Pick any surface mode; we're about to overwrite the result. This step exists only to set up `paulTrap.pa#` at the grid `dx` you want.
+2. **In SIMION:** `File → Save PA` (`paulTrap.pa#`) and then `File → Close PA` (or `Unload`). SIMION caches PA contents in memory; if you don't unload it, the next step's overwrite on disk won't be picked up.
+3. **Shell:** run the rasterizer.
+   ```bash
+   ~/.venvs/mesh/bin/python3 rasterize_pa.py
+   ```
+   This writes `paulTrap_rasterized.pa#` (the original `paulTrap.pa#` is untouched).
+4. **Shell:** swap the rasterized file in for the SIMION-generated one.
+   ```bash
+   cp paulTrap.pa#               paulTrap.pa#.simion-backup
+   cp paulTrap_rasterized.pa#    paulTrap.pa#
+   ```
+5. **In SIMION:** `File → Load PA → paulTrap.pa#` (reload). Then click **Refine** again. Because `paulTrap.pa#` already contains electrode markers, SIMION skips voxelization and just runs the relaxation solver, producing leak-free `paulTrap.pa1` through `paulTrap.pa10`.
+6. **Shell:** generate the dielectric PA (unchanged).
+   ```bash
+   ~/.venvs/mesh/bin/python3 generate_dielectric_pa.py
+   ```
+7. **In SIMION:** run `refine_with_dielectric.lua` (unchanged).
+
+### Verifying
+
+```bash
+~/.venvs/mesh/bin/python3 rasterize_pa.py --verify
+```
+
+`--verify` re-reads the source pa# and reports per-electrode cell counts for both. The rasterized counts should be **pair-symmetric** by construction (electrodes 1↔2, 3↔4, 9↔10 should match exactly; rods 5–8 should be close). Large positive diffs in the source column or broken pair-symmetry indicate the source pa# is leaking — that's the situation this workflow exists to fix.
+
+### Going back to the standard workflow
+
+```bash
+cp paulTrap.pa#.simion-backup paulTrap.pa#
+```
+
+Then in SIMION: unload the PA, reload it from disk, and Refine normally (the fractional-surface workflow from Sections 4–5).
+
+---
+
 ## 6. Creating a voltage schedule
 
 Edit `generate_voltages.py` to define the time-varying voltages for all 10 electrodes, then run it:

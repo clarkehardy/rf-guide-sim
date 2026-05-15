@@ -113,6 +113,194 @@ def read_pa(path):
     return V_norm, elec_other, elec_this, dx_h if dx_h > 0 else DX
 
 
+# ── Read pa file as volts (unit electrode = 1 V) ──────────────────────────────
+
+def read_pa_volts(path):
+    """Read a unit-potential PA and return V in volts.
+
+    Conventions:
+      - This-electrode boundary cells (stored as ~200000+N) → 1.0 V
+      - Other-electrode boundary cells (sign-bit set)       → 0.0 V
+      - Free-space cells                                    → stored/scale_ref V
+    SIMION's scale_ref is read from the header (offset 8); typically 100000,
+    i.e. a stored value of 100000 corresponds to 1 V at unit electrode potential.
+    """
+    n_pts = NX * NY * NZ
+    with open(path, "rb") as f:
+        hdr = f.read(HEADER)
+        raw = np.frombuffer(f.read(n_pts * 8), dtype="<f8").copy()
+    scale       = struct.unpack_from("<d", hdr, 8)[0]
+    elec_other  = np.signbit(raw)
+    # The electrode marker is ~2*scale + N (≈ 200001..200010 for scale=100000),
+    # well above any free-cell stored value (which maxes at scale = 1 V).
+    elec_this   = raw > 1.5 * scale
+    V           = np.abs(raw) / scale
+    V[elec_this]  = 1.0
+    V[elec_other] = 0.0
+    return V.reshape(NZ, NY, NX)
+
+
+# ── Optical Paul trap centre (auto-detected from STL bboxes) ──────────────────
+
+def _stl_bbox(name):
+    """(lo, hi) bounding box for an STL, or None if absent."""
+    path = os.path.join(BASE, name)
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        f.read(80)
+        n = struct.unpack("<I", f.read(4))[0]
+        raw = f.read(n * 50)
+    if n == 0 or len(raw) < n * 50:
+        return None
+    arr = np.frombuffer(raw, dtype=np.uint8).reshape(n, 50)
+    v   = np.frombuffer(arr[:, 12:48].tobytes(), dtype="<f4").reshape(-1, 3)
+    return v.min(axis=0), v.max(axis=0)
+
+
+def auto_optical_centre():
+    """Return (x, y, z) of the optical Paul trap centre in Fusion world mm.
+
+    Centre defined as:
+      - (x, y): geometric centre of the four set-3 rod STL bboxes
+      - z:       midpoint of the two optical endcap centroids
+    Returns None if any required STL is missing.
+    """
+    rod_bbs = [_stl_bbox(f"rod_3_{s}.stl") for s in ("TL", "TR", "BL", "BR")]
+    rod_bbs = [b for b in rod_bbs if b is not None]
+    ec_U    = _stl_bbox("endcap_optical_U.stl")
+    ec_D    = _stl_bbox("endcap_optical_D.stl")
+    if not rod_bbs or ec_U is None or ec_D is None:
+        return None
+    lo = np.array([b[0] for b in rod_bbs])
+    hi = np.array([b[1] for b in rod_bbs])
+    cx = 0.5 * (lo[:, 0].min() + hi[:, 0].max())
+    cy = 0.5 * (lo[:, 1].min() + hi[:, 1].max())
+    cz = 0.25 * (ec_U[0][2] + ec_U[1][2] + ec_D[0][2] + ec_D[1][2])
+    return float(cx), float(cy), float(cz)
+
+
+# ── Voltage extraction from CSV ───────────────────────────────────────────────
+
+def read_voltages_csv(csv_path, time_us):
+    """Read voltages_N.csv and return ({electrode → V}, actual_time_us).
+
+    RF amplitudes (V_RF, V_RF3) are treated as the instantaneous voltage on
+    their respective electrodes (i.e. phase = 0 snapshot: cos(ωt+φ)=1).  Per-
+    rod DC trims on set 3 are added to the appropriate RF rod.
+    """
+    rows   = []
+    header = None
+    with open(csv_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(",")
+            if header is None:
+                header = parts
+                continue
+            rows.append([float(x) for x in parts])
+    if not rows:
+        return {}, 0.0
+    arr = np.array(rows)
+    t_idx     = header.index("time_us")
+    chosen_i  = int(np.argmin(np.abs(arr[:, t_idx] - time_us)))
+    chosen    = arr[chosen_i]
+
+    def get(name):
+        return float(chosen[header.index(name)]) if name in header else 0.0
+
+    V_RF, V_RF3 = get("V_RF"), get("V_RF3")
+    voltages = {
+        1:  +V_RF,
+        2:  -V_RF,
+        3:  get("V_endcap_load_U"),
+        4:  get("V_endcap_load_D"),
+        5:  +V_RF3 + get("V_dc_3_TL"),
+        6:  -V_RF3 + get("V_dc_3_TR"),
+        7:  -V_RF3 + get("V_dc_3_BL"),
+        8:  +V_RF3 + get("V_dc_3_BR"),
+        9:  get("V_endcap_optical_U"),
+        10: get("V_endcap_optical_D"),
+    }
+    return voltages, float(chosen[t_idx])
+
+
+# ── Total potential through a centre point ────────────────────────────────────
+
+def plot_total(voltages, centre, span_mm, label):
+    """Plot V_total(Δx,0,0), V_total(0,Δy,0), V_total(0,0,Δz) through `centre`.
+
+    V_total = Σ_N V_N · pa_N_unit, where pa_N_unit is the SIMION unit-potential
+    PA for electrode N (1 V on that electrode, 0 V on the others).
+
+    Outputs `field_total_<label>.png` (or `field_total.png` if label is None).
+    """
+    x_f, y_f, z_f = gem_axes()
+    cx, cy, cz    = centre
+
+    ix0 = int(round((cx - GEM_OFF[0]) / DX))
+    iy0 = int(round((cy - GEM_OFF[1]) / DX))
+    iz0 = int(round((cz - GEM_OFF[2]) / DX))
+    n   = int(np.ceil(span_mm / DX))
+    ix_lo, ix_hi = max(0, ix0 - n), min(NX, ix0 + n + 1)
+    iy_lo, iy_hi = max(0, iy0 - n), min(NY, iy0 + n + 1)
+    iz_lo, iz_hi = max(0, iz0 - n), min(NZ, iz0 + n + 1)
+
+    V_x = np.zeros(ix_hi - ix_lo, dtype=np.float64)
+    V_y = np.zeros(iy_hi - iy_lo, dtype=np.float64)
+    V_z = np.zeros(iz_hi - iz_lo, dtype=np.float64)
+
+    n_loaded = 0
+    for en in range(1, 11):
+        v = voltages.get(en, 0.0)
+        if abs(v) < 1e-12:
+            continue
+        pa_path = os.path.join(BASE, f"paulTrap.pa{en}")
+        if not os.path.exists(pa_path):
+            print(f"  [skip] paulTrap.pa{en} not found")
+            continue
+        print(f"  pa{en}: V = {v:+9.3f} V  — loading & accumulating")
+        Vu = read_pa_volts(pa_path)
+        V_x += v * Vu[iz0, iy0, ix_lo:ix_hi]
+        V_y += v * Vu[iz0, iy_lo:iy_hi, ix0]
+        V_z += v * Vu[iz_lo:iz_hi, iy0, ix0]
+        del Vu
+        n_loaded += 1
+    print(f"  Accumulated contributions from {n_loaded} electrode(s)")
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), sharey=True)
+
+    for ax, axis_pos, V_line, axis_name, other_a, other_b, color in [
+        (axes[0], x_f[ix_lo:ix_hi] - cx, V_x, "x", ("y", cy), ("z", cz), "steelblue"),
+        (axes[1], y_f[iy_lo:iy_hi] - cy, V_y, "y", ("x", cx), ("z", cz), "seagreen"),
+        (axes[2], z_f[iz_lo:iz_hi] - cz, V_z, "z", ("x", cx), ("y", cy), "crimson"),
+    ]:
+        ax.plot(axis_pos, V_line, color=color, lw=1.8)
+        ax.axvline(0, color="grey", lw=0.5, ls=":")
+        ax.grid(True, alpha=0.18)
+        ax.set_xlabel(rf"$\Delta {axis_name}$  (mm)")
+        ax.set_title(f"V along {axis_name}  "
+                     f"({other_a[0]}={other_a[1]:.3f}, {other_b[0]}={other_b[1]:.3f})")
+    axes[0].set_ylabel("V  (volts)")
+
+    nonzero = [f"e{n}={voltages.get(n,0):+.0f}V"
+               for n in range(1, 11) if abs(voltages.get(n, 0)) > 1e-12]
+    fig.suptitle(
+        f"Total potential through optical Paul trap centre "
+        f"({cx:.2f}, {cy:.2f}, {cz:.2f}) mm  —  span ±{span_mm:g} mm\n"
+        f"{'  '.join(nonzero) if nonzero else 'all electrodes at 0 V'}",
+        fontsize=10)
+    fig.tight_layout()
+
+    out_name = f"field_total_{label}.png" if label else "field_total.png"
+    out      = os.path.join(BASE, out_name)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"  Saved: {out}")
+    return fig
+
+
 # ── NaN fill ──────────────────────────────────────────────────────────────────
 
 def _fill_nan(V):
@@ -413,8 +601,68 @@ def main():
                     help="Open interactive 3-D PyVista window")
     ap.add_argument("--screenshot", default=None,
                     help="Save 3-D view to PNG (implies --3d)")
+    # --total mode: sum V_N · pa_N along x/y/z through a centre point.
+    ap.add_argument("--total", action="store_true",
+                    help="Plot the total potential V = Σ V_N · pa_N along the "
+                         "three Cartesian axes through a centre point.  "
+                         "Useful for comparing field shape with and without "
+                         "the dielectric step.")
+    ap.add_argument("--centre", "--center", dest="centre",
+                    type=float, nargs=3, default=None,
+                    metavar=("X", "Y", "Z"),
+                    help="Fusion-world centre (mm) for --total.  Default: "
+                         "the optical Paul trap centre, auto-detected from "
+                         "rod_3_*.stl and endcap_optical_*.stl bboxes.")
+    ap.add_argument("--span", type=float, default=10.0,
+                    help="Half-width of each 1-D plot in --total mode "
+                         "(mm, default 10).")
+    ap.add_argument("--volts-file", default="voltages_1.csv",
+                    help="Voltage schedule CSV to pull electrode voltages "
+                         "from for --total (default: voltages_1.csv).")
+    ap.add_argument("--time", type=float, default=0.0,
+                    help="Time (µs) at which to sample voltages from the CSV "
+                         "(default: 0).  RF amplitudes are taken as the "
+                         "instantaneous voltage (phase = 0 snapshot).")
+    ap.add_argument("--voltages", type=float, nargs=10, default=None,
+                    metavar=("V1","V2","V3","V4","V5","V6","V7","V8","V9","V10"),
+                    help="Explicit voltages (V) for electrodes 1..10, "
+                         "overriding --volts-file/--time.")
+    ap.add_argument("--label", default=None,
+                    help="Suffix for the output filename in --total mode "
+                         "(field_total_<label>.png).  Useful for saving "
+                         "before/after-dielectric pairs.")
     args   = ap.parse_args()
     do_3d  = args.show3d or bool(args.screenshot)
+
+    # ── --total mode ─────────────────────────────────────────────────────────
+    if args.total:
+        # Centre
+        if args.centre is not None:
+            centre = tuple(args.centre)
+        else:
+            centre = auto_optical_centre()
+            if centre is None:
+                sys.exit("ERROR: cannot auto-detect optical Paul trap centre "
+                         "(some rod_3_*.stl or endcap_optical_*.stl missing).  "
+                         "Pass --centre X Y Z explicitly.")
+            print(f"Optical Paul trap centre (auto): "
+                  f"({centre[0]:.3f}, {centre[1]:.3f}, {centre[2]:.3f}) mm")
+        # Voltages
+        if args.voltages is not None:
+            voltages = {n + 1: v for n, v in enumerate(args.voltages)}
+            print("Voltages from --voltages CLI:")
+        else:
+            vpath = os.path.join(BASE, args.volts_file)
+            if not os.path.exists(vpath):
+                sys.exit(f"Voltage file not found: {vpath}")
+            voltages, t_used = read_voltages_csv(vpath, args.time)
+            print(f"Voltages from {args.volts_file} at t={t_used:.0f} µs "
+                  f"(requested {args.time:.0f} µs):")
+        for n in range(1, 11):
+            print(f"  elec {n:2d}: {voltages.get(n, 0.0):+9.3f} V")
+        plot_total(voltages, centre, args.span, args.label)
+        plt.show()
+        return
 
     # Default: all DC endcaps (the four bias electrodes — rest are RF-driven)
     elecs = [args.elec] if args.elec else [3, 4, 9, 10]
