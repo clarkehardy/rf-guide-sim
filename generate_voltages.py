@@ -69,9 +69,8 @@ times    = np.linspace(0, max_time, 100_000)
 V_RF = 10 * np.ones_like(times)
 
 # ── Load Paul trap endcaps ────────────────────────────────────────────────────
-V_endcap_load_U = np.zeros_like(times)
-V_endcap_load_D = 10 * np.ones_like(times)
-V_endcap_load_D[times <= 5] = -10
+V_endcap_load_U = 10 * np.ones_like(times)
+V_endcap_load_D = -10 * np.ones_like(times)
 
 # ── Set 3 (optical Paul trap) ─────────────────────────────────────────────────
 # PLACEHOLDER: set V_RF3 to the trapping amplitude for the wider Paul trap.
@@ -94,13 +93,17 @@ V_endcap_optical_D = np.zeros_like(times)
 # Independent, finer time axis.  Time is measured from trigger-fire, not
 # absolute simulation time.  paulTrap.lua prefers these columns over the
 # V_endcap_optical_U/D fallback columns above.
-max_time_trig = 5000          # µs — total duration of the post-trigger schedule
-dt_trig       = 0.5           # µs — time step (finer than the main schedule)
+max_time_trig = 10000          # µs — total duration of the post-trigger schedule
+dt_trig       = 10           # µs — time step (finer than the main schedule)
 times_trig    = np.arange(0, max_time_trig + dt_trig / 2, dt_trig)
 
 # PLACEHOLDER: define pulse shape here.
-V_endcap_optical_U_trig = 20 * np.ones_like(times_trig)
-V_endcap_optical_D_trig = 20 * np.ones_like(times_trig)
+# Column names must be V_e{N}_trig where N is the SIMION electrode number.
+# Add or remove entries to match the electrodes listed in trap_config.lua triggers.
+V_e9_trig  = 20 * np.ones_like(times_trig)   # endcap_optical_U
+V_e10_trig = 20 * np.ones_like(times_trig)   # endcap_optical_D
+V_e4_trig  = -10 * np.ones_like(times_trig)
+V_e4_trig[times_trig > 1e3] = 10
 
 # ── Assemble schedule ─────────────────────────────────────────────────────────
 COLUMNS = [
@@ -117,9 +120,12 @@ COLUMNS = [
     ("V_endcap_optical_D", V_endcap_optical_D),
 ]
 TRIG_COLUMNS = [
-    ("time_trig_us",            times_trig),
-    ("V_endcap_optical_U_trig", V_endcap_optical_U_trig),
-    ("V_endcap_optical_D_trig", V_endcap_optical_D_trig),
+    ("time_trig_us", times_trig),
+    ("V_e4_trig", V_e4_trig),    # endcap_load_D - triggered
+    ("V_e9_trig",    V_e9_trig),    # endcap_optical_U — triggered
+    ("V_e10_trig",   V_e10_trig),   # endcap_optical_D — triggered
+    # To trigger electrode 3 (endcap_load_U): add ("V_e3_trig", V_e3_trig) here
+    # and define V_e3_trig = ... above, and add electrode 3 to a trigger in trap_config.lua.
 ]
 
 # ── Write CSV ─────────────────────────────────────────────────────────────────
@@ -178,11 +184,12 @@ try:
     ax2.set_title("Optical Paul trap (set 3 rods)")
     ax2.legend(fontsize=8, ncol=4)
     ax2.grid(True, alpha=0.3)
-
-    ax3.step(times_trig, V_endcap_optical_U_trig, where="post", color="seagreen", lw=1.5,
-             label="V_endcap_optical_U_trig (9)")
-    ax3.step(times_trig, V_endcap_optical_D_trig, where="post", color="seagreen", lw=1.5, ls="--",
-             label="V_endcap_optical_D_trig (10)")
+    ax3.step(times_trig, V_e4_trig, where="post", color="seagreen", lw=1.5, ls="--",
+             label="V_e4_trig (endcap_load_D)")
+    ax3.step(times_trig, V_e9_trig,  where="post", color="seagreen", lw=1.5,
+             label="V_e9_trig  (endcap_optical_U)")
+    ax3.step(times_trig, V_e10_trig, where="post", color="seagreen", lw=1.5, ls="--",
+             label="V_e10_trig (endcap_optical_D)")
     ax3.set_xlabel("Time since trigger (µs)")
     ax3.set_ylabel("Voltage (V)")
     ax3.set_title(f"Post-trigger pulse — electrodes 9, 10  ({dt_trig} µs steps, {max_time_trig} µs total)")

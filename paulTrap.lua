@@ -66,10 +66,11 @@ local _v_dc_BL     = {}   -- electrode 7 DC trim (rod_3_BL)
 local _v_dc_BR     = {}   -- electrode 8 DC trim (rod_3_BR)
 local _v_ec_opt_U  = {}   -- electrode 9  (main schedule, coarse time axis)
 local _v_ec_opt_D  = {}   -- electrode 10 (main schedule, coarse time axis)
--- Post-trigger fine-resolution schedule (independent time axis, time since trigger)
-local _vt_trig         = {}
-local _v_ec_opt_U_trig = {}   -- electrode 9  post-trigger pulse
-local _v_ec_opt_D_trig = {}   -- electrode 10 post-trigger pulse
+-- Post-trigger fine-resolution schedule (independent time axis, time since trigger).
+-- _v_trig[N] is the voltage array for triggered electrode N; built dynamically from
+-- the triggers config in initialize_run so any electrode can have a trig schedule.
+local _vt_trig = {}
+local _v_trig  = {}
 
 local function _interp(t_tbl, v_tbl, t)
   if #t_tbl == 0 then return 0.0 end
@@ -126,6 +127,23 @@ local function _current_pressure()
   if t_since <= 0 then return _P_baseline end
   if _ramp_duration_us <= 0 or t_since >= _ramp_duration_us then return _ramp_P_final end
   return _P_baseline + (t_since / _ramp_duration_us) * (_ramp_P_final - _P_baseline)
+end
+
+-- Returns the voltage for DC electrode `en` at absolute time `t_abs`.
+-- Handles three cases uniformly:
+--   • Not triggered (_trig_for_electrode[en] nil): main schedule, absolute t.
+--   • Triggered, not yet fired: 0 V (gated).
+--   • Triggered, fired: post-trigger schedule (V_e{N}_trig column) if loaded,
+--     else main schedule, both using time-since-fire as the lookup key.
+local function _volt_dc(en, t_abs, v_main)
+  if not _trig_for_electrode[en] then
+    return #v_main > 0 and _interp(_vt, v_main, t_abs) or 0
+  end
+  local t_rel = _trig_t(en, t_abs)
+  if not t_rel then return 0 end
+  local v_pt = _v_trig[en]
+  if v_pt and #v_pt > 0 then return _interp(_vt_trig, v_pt, t_rel) end
+  return #v_main > 0 and _interp(_vt, v_main, t_rel) or 0
 end
 
 -- ── Trajectory file ───────────────────────────────────────────────────────────
@@ -240,9 +258,8 @@ function segment.initialize_run()
   _v_dc_BR     = {}
   _v_ec_opt_U  = {}
   _v_ec_opt_D  = {}
-  _vt_trig         = {}
-  _v_ec_opt_U_trig = {}
-  _v_ec_opt_D_trig = {}
+  _vt_trig = {}
+  _v_trig  = {}
 
   do
     local vpath = D .. "voltages_" .. math.floor(voltage_file_number) .. ".csv"
@@ -286,10 +303,17 @@ function segment.initialize_run()
         ["V_endcap_optical_U"] = _v_ec_opt_U,
         ["V_endcap_optical_D"] = _v_ec_opt_D,
       }
-      local trig_dest = {
-        ["V_endcap_optical_U_trig"] = _v_ec_opt_U_trig,
-        ["V_endcap_optical_D_trig"] = _v_ec_opt_D_trig,
-      }
+      -- Build post-trigger dest from the triggers config.
+      -- Column name for electrode N is V_e{N}_trig.
+      local trig_dest = {}
+      for _, trig in ipairs(_triggers) do
+        for _, en in ipairs(trig.electrodes) do
+          if not _v_trig[en] then
+            _v_trig[en] = {}
+            trig_dest["V_e" .. en .. "_trig"] = _v_trig[en]
+          end
+        end
+      end
 
       local ti  = col_idx["time_us"]
       local tti = col_idx["time_trig_us"]
@@ -334,10 +358,14 @@ function segment.initialize_run()
         simion.print(string.format(
           "  Trigger schedule: %d rows,  t=0: %.4f us,  t_end: %.4f us\n",
           #_vt_trig, _vt_trig[1], _vt_trig[#_vt_trig]))
-        _ch("V_ec_opt_U_trig", _v_ec_opt_U_trig)
-        _ch("V_ec_opt_D_trig", _v_ec_opt_D_trig)
+        for _, trig in ipairs(_triggers) do
+          for _, en in ipairs(trig.electrodes) do
+            local vt = _v_trig[en]
+            if vt then _ch(string.format("V_e%d_trig", en), vt) end
+          end
+        end
       else
-        simion.print("  Trigger schedule: not found (V_endcap_optical_U/D_trig columns absent)\n")
+        simion.print("  Trigger schedule: not found (no V_e{N}_trig columns in CSV)\n")
       end
     else
       simion.print("WARNING: voltage file not found: " .. vpath .. "\n")
@@ -415,9 +443,9 @@ function segment.fast_adjust()
   adj_elect[1] =  V_RF   -- sets 1+2: TL + BR rods (+RF phase)
   adj_elect[2] = -V_RF   -- sets 1+2: TR + BL rods (-RF phase)
 
-  -- Load endcaps (electrodes 3, 4) — always on, follow schedule from t=0
-  adj_elect[3] = #_v_ec_load_U > 0 and _interp(_vt, _v_ec_load_U, t) or 0
-  adj_elect[4] = #_v_ec_load_D > 0 and _interp(_vt, _v_ec_load_D, t) or 0
+  -- Load endcaps (electrodes 3, 4)
+  adj_elect[3] = _volt_dc(3, t, _v_ec_load_U)
+  adj_elect[4] = _volt_dc(4, t, _v_ec_load_D)
 
   -- Set 3 (electrodes 5–8): shared V_RF3 with diagonal-pair phasing + per-rod DC trim.
   -- Always on, absolute TOF for both carrier and envelope.
@@ -433,26 +461,9 @@ function segment.fast_adjust()
   adj_elect[7] = -V_RF3 + dcBL   -- rod_3_BL
   adj_elect[8] =  V_RF3 + dcBR   -- rod_3_BR
 
-  -- Optical endcaps (electrodes 9, 10) — gated by triggers.
-  -- Before trigger: 0 V.  After trigger: play post-trigger schedule (fine time axis)
-  -- if defined; otherwise fall back to main-schedule columns (coarse time axis).
-  -- In both cases time is measured from trigger-fire, not absolute TOF.
-  local t9 = _trig_t(9, t)
-  if t9 then
-    adj_elect[9] = #_v_ec_opt_U_trig > 0
-      and _interp(_vt_trig, _v_ec_opt_U_trig, t9)
-      or  (#_v_ec_opt_U    > 0 and _interp(_vt, _v_ec_opt_U, t9) or 0)
-  else
-    adj_elect[9] = 0
-  end
-  local t10 = _trig_t(10, t)
-  if t10 then
-    adj_elect[10] = #_v_ec_opt_D_trig > 0
-      and _interp(_vt_trig, _v_ec_opt_D_trig, t10)
-      or  (#_v_ec_opt_D    > 0 and _interp(_vt, _v_ec_opt_D, t10) or 0)
-  else
-    adj_elect[10] = 0
-  end
+  -- Optical endcaps (electrodes 9, 10)
+  adj_elect[9]  = _volt_dc(9,  t, _v_ec_opt_U)
+  adj_elect[10] = _volt_dc(10, t, _v_ec_opt_D)
 
   -- Dielectric volumes (trapping_lens, collection_lens, lens_holder) are not driven here.
 end
