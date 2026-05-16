@@ -20,6 +20,7 @@ import argparse
 import importlib.util
 import math
 import multiprocessing
+import multiprocessing.shared_memory
 import os
 import re
 import struct
@@ -30,6 +31,11 @@ import numpy as np
 
 # ── Directory containing PA files, CSVs, and trap_config.py ──────────────────
 BASE = os.path.dirname(os.path.abspath(__file__))
+
+# ── Globals shared across worker processes ────────────────────────────────────
+# Set by _shm_initializer (multiprocessing) or directly in single-process mode.
+_worker_phi_arrs = None
+_worker_grid     = None
 
 # ── Physical constants ────────────────────────────────────────────────────────
 KB_J        = 1.38065e-23       # J / K
@@ -104,16 +110,21 @@ def _load_pa_unit(path):
     return phi, NX, NY, NZ, DX
 
 
-def load_all_pa(base_dir):
-    """Load paulTrap.pa1–pa10 and pre-compute E-field arrays.
+def load_all_phi(base_dir):
+    """Load paulTrap.pa1–pa10 and return raw unit-potential arrays.
+
+    Does NOT pre-compute E-field arrays — E = −∇φ is evaluated analytically
+    from the gradient of the trilinear interpolant at each query point (see
+    _phi_grad_trilinear).  This keeps peak memory at ~780 MB (10 × 78 MB)
+    rather than ~2.3 GB (30 arrays), and is physically equivalent.
 
     Returns
     -------
-    E_fields : list of 3-tuples (Ez, Ey, Ex), each ndarray (NZ, NY, NX)
+    phi_arrs : list of ndarrays, each shape (NZ, NY, NX), float64
                Index 0 = electrode 1, …, index 9 = electrode 10.
     grid     : dict with keys NX, NY, NZ, DX
     """
-    E_fields = []
+    phi_arrs = []
     grid = None
 
     for en in range(1, N_ELEC + 1):
@@ -129,24 +140,16 @@ def load_all_pa(base_dir):
         if grid is None:
             grid = dict(NX=NX, NY=NY, NZ=NZ, DX=DX)
         else:
-            # Sanity-check consistency across PA files
             if (NX, NY, NZ) != (grid["NX"], grid["NY"], grid["NZ"]):
                 raise ValueError(
                     f"paulTrap.pa{en} has different grid size "
                     f"({NX},{NY},{NZ}) vs pa1 ({grid['NX']},{grid['NY']},{grid['NZ']})")
 
-        # E = -grad(phi).  np.gradient on [NZ, NY, NX] with spacing DX returns
-        # (d/dz, d/dy, d/dx) → negate each for E components.
-        g = np.gradient(phi, DX, DX, DX)   # returns [dφ/dz, dφ/dy, dφ/dx]
-        Ez = -g[0]
-        Ey = -g[1]
-        Ex = -g[2]
-        E_fields.append((Ez, Ey, Ex))
-
+        phi_arrs.append(phi)
         elapsed = time.perf_counter() - t0
         print(f"  ({elapsed:.1f}s)", flush=True)
 
-    return E_fields, grid
+    return phi_arrs, grid
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -348,59 +351,69 @@ def _interp(t_arr, v_arr, t):
 # Trilinear E-field interpolation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _trilinear(Ez_arr, Ey_arr, Ex_arr, NX, NY, NZ, DX, px, py, pz):
-    """Trilinear interpolation of (Ez, Ey, Ex) at GEM-coordinate position.
+def _phi_grad_trilinear(phi_arr, NX, NY, NZ, DX, px, py, pz):
+    """Trilinear interpolation of φ and its gradient from the φ array alone.
 
-    Parameters
-    ----------
-    px, py, pz : float  (GEM coordinates, mm)
+    Computes E = −∇φ analytically from the gradient of the trilinear
+    interpolant using the same 8 corner φ values.  This is equivalent to
+    interpolating separately pre-computed E-field arrays but uses 3× less
+    memory (one φ array instead of three E-field arrays per electrode).
 
     Returns
     -------
-    (ez, ey, ex) : floats (V/mm per unit volt on this electrode)
+    (ez, ey, ex) : E-field components at the query point (V/mm per unit volt)
     """
-    fx = px / DX
-    fy = py / DX
-    fz = pz / DX
+    fx = max(0.0, min(px / DX, NX - 1.0001))
+    fy = max(0.0, min(py / DX, NY - 1.0001))
+    fz = max(0.0, min(pz / DX, NZ - 1.0001))
 
-    i0 = int(fx)
-    j0 = int(fy)
-    k0 = int(fz)
+    i0 = int(fx);  wx = fx - i0;  i0 = min(i0, NX - 2)
+    j0 = int(fy);  wy = fy - j0;  j0 = min(j0, NY - 2)
+    k0 = int(fz);  wz = fz - k0;  k0 = min(k0, NZ - 2)
+    ox, oy, oz = 1.0 - wx, 1.0 - wy, 1.0 - wz
 
-    # Clamp so we can always do i0 and i0+1
-    i0 = max(0, min(i0, NX - 2))
-    j0 = max(0, min(j0, NY - 2))
-    k0 = max(0, min(k0, NZ - 2))
+    # 8 corner φ values  [k][j][i]
+    c000 = phi_arr[k0,   j0,   i0  ]
+    c100 = phi_arr[k0,   j0,   i0+1]
+    c010 = phi_arr[k0,   j0+1, i0  ]
+    c110 = phi_arr[k0,   j0+1, i0+1]
+    c001 = phi_arr[k0+1, j0,   i0  ]
+    c101 = phi_arr[k0+1, j0,   i0+1]
+    c011 = phi_arr[k0+1, j0+1, i0  ]
+    c111 = phi_arr[k0+1, j0+1, i0+1]
 
-    wx = fx - i0
-    wy = fy - j0
-    wz = fz - k0
+    # Gradient of the trilinear interpolant (per grid spacing → divide by DX)
+    # ∂φ/∂x: differentiate weights w.r.t. wx, treating wy, wz as constants
+    dphi_dx = (oy*oz*(c100 - c000) + wy*oz*(c110 - c010) +
+               oy*wz*(c101 - c001) + wy*wz*(c111 - c011)) / DX
+    dphi_dy = (ox*oz*(c010 - c000) + wx*oz*(c110 - c100) +
+               ox*wz*(c011 - c001) + wx*wz*(c111 - c101)) / DX
+    dphi_dz = (ox*oy*(c001 - c000) + wx*oy*(c101 - c100) +
+               ox*wy*(c011 - c010) + wx*wy*(c111 - c110)) / DX
 
-    # Clamp fractional weights to [0, 1]
-    wx = max(0.0, min(1.0, wx))
-    wy = max(0.0, min(1.0, wy))
-    wz = max(0.0, min(1.0, wz))
+    # E = −∇φ
+    return -dphi_dz, -dphi_dy, -dphi_dx
 
-    # Trilinear weights for 8 corners
-    # Indexing: arr[k, j, i] = arr[z_idx, y_idx, x_idx]
-    def _tl(arr):
-        c000 = arr[k0,   j0,   i0  ]
-        c100 = arr[k0,   j0,   i0+1]
-        c010 = arr[k0,   j0+1, i0  ]
-        c110 = arr[k0,   j0+1, i0+1]
-        c001 = arr[k0+1, j0,   i0  ]
-        c101 = arr[k0+1, j0,   i0+1]
-        c011 = arr[k0+1, j0+1, i0  ]
-        c111 = arr[k0+1, j0+1, i0+1]
-        c00 = c000 * (1 - wx) + c100 * wx
-        c10 = c010 * (1 - wx) + c110 * wx
-        c01 = c001 * (1 - wx) + c101 * wx
-        c11 = c011 * (1 - wx) + c111 * wx
-        c0  = c00  * (1 - wy) + c10  * wy
-        c1  = c01  * (1 - wy) + c11  * wy
-        return c0 * (1 - wz) + c1 * wz
 
-    return _tl(Ez_arr), _tl(Ey_arr), _tl(Ex_arr)
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared-memory worker initializer
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _shm_initializer(shm_names, shm_shapes, grid):
+    """Attach to shared φ arrays in each worker process.
+
+    Called once per worker at pool startup.  Sets the module globals
+    _worker_phi_arrs and _worker_grid so that _worker() can use them
+    without receiving the large arrays through pickle.
+    """
+    global _worker_phi_arrs, _worker_grid
+    _worker_phi_arrs = []
+    for name, shape in zip(shm_names, shm_shapes):
+        shm = multiprocessing.shared_memory.SharedMemory(name=name)
+        arr = np.ndarray(shape, dtype=np.float64, buffer=shm.buf)
+        _worker_phi_arrs.append(arr)
+        # shm handle is intentionally kept open for the worker's lifetime
+    _worker_grid = grid
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -487,13 +500,14 @@ def compute_voltages(t_abs, sched, trig_fired, trig_fire_time,
 # Dynamics function
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _dynamics(t, y, adj, E_fields, NX, NY, NZ, DX, q_C, m_kg):
+def _dynamics(t, y, adj, phi_arrs, NX, NY, NZ, DX, q_C, m_kg):
     """Compute dy/dt = [vx, vy, vz, ax, ay, az] for the Dormand-Prince stages.
 
     Parameters
     ----------
-    y       : ndarray [px, py, pz, vx, vy, vz]  (GEM mm, mm/µs)
-    adj     : dict {1..10 → float} electrode voltages
+    y        : ndarray [px, py, pz, vx, vy, vz]  (GEM mm, mm/µs)
+    adj      : dict {1..10 → float} electrode voltages
+    phi_arrs : list of 10 unit-potential arrays, shape (NZ, NY, NX)
 
     Returns
     -------
@@ -501,7 +515,7 @@ def _dynamics(t, y, adj, E_fields, NX, NY, NZ, DX, q_C, m_kg):
     """
     px, py, pz, vx, vy, vz = y
 
-    # Sum E-field contributions from all electrodes
+    # Sum E = −∇φ contributions from all electrodes
     ez_tot = 0.0
     ey_tot = 0.0
     ex_tot = 0.0
@@ -509,8 +523,7 @@ def _dynamics(t, y, adj, E_fields, NX, NY, NZ, DX, q_C, m_kg):
         v = adj[en]
         if abs(v) < 1e-14:
             continue
-        Ez_arr, Ey_arr, Ex_arr = E_fields[en - 1]
-        ez, ey, ex = _trilinear(Ez_arr, Ey_arr, Ex_arr, NX, NY, NZ, DX, px, py, pz)
+        ez, ey, ex = _phi_grad_trilinear(phi_arrs[en - 1], NX, NY, NZ, DX, px, py, pz)
         ez_tot += v * ez
         ey_tot += v * ey
         ex_tot += v * ex
@@ -530,7 +543,7 @@ def _dynamics(t, y, adj, E_fields, NX, NY, NZ, DX, q_C, m_kg):
 # Single-particle integrator
 # ─────────────────────────────────────────────────────────────────────────────
 
-def integrate_particle(ion_num, y0, t_start, sim_params, sched, E_fields, grid):
+def integrate_particle(ion_num, y0, t_start, sim_params, sched, phi_arrs, grid):
     """Integrate one particle trajectory using Dormand-Prince RK45 + Langevin.
 
     Parameters
@@ -547,7 +560,7 @@ def integrate_particle(ion_num, y0, t_start, sim_params, sched, E_fields, grid):
                     V0_default, V0_3_default,
                     pressure_ramp (None or dict)
     sched       : dict from load_voltage_schedule()
-    E_fields    : list of (Ez,Ey,Ex) arrays
+    phi_arrs    : list of 10 unit-potential arrays, shape (NZ, NY, NX)
     grid        : dict NX,NY,NZ,DX
 
     Returns
@@ -649,7 +662,7 @@ def integrate_particle(ion_num, y0, t_start, sim_params, sched, E_fields, grid):
     adj  = compute_voltages(t, sched, trig_fired, trig_fire_time,
                             omega_rf, omega_rf3, V0_default, V0_3_default,
                             trig_for_elec)
-    k1   = _dynamics(t, y, adj, E_fields, NX, NY, NZ, DX, q_C, m_kg)
+    k1   = _dynamics(t, y, adj, phi_arrs, NX, NY, NZ, DX, q_C, m_kg)
 
     while t < t_max_us:
         # Clamp dt so we don't overshoot t_max
@@ -663,31 +676,31 @@ def integrate_particle(ion_num, y0, t_start, sim_params, sched, E_fields, grid):
         adj2 = compute_voltages(t + dt/5, sched, trig_fired, trig_fire_time,
                                 omega_rf, omega_rf3, V0_default, V0_3_default,
                                 trig_for_elec)
-        k2   = _dynamics(t + dt/5, y2, adj2, E_fields, NX, NY, NZ, DX, q_C, m_kg)
+        k2   = _dynamics(t + dt/5, y2, adj2, phi_arrs, NX, NY, NZ, DX, q_C, m_kg)
 
         y3   = y + dt * (a31*k1 + a32*k2)
         adj3 = compute_voltages(t + 3*dt/10, sched, trig_fired, trig_fire_time,
                                 omega_rf, omega_rf3, V0_default, V0_3_default,
                                 trig_for_elec)
-        k3   = _dynamics(t + 3*dt/10, y3, adj3, E_fields, NX, NY, NZ, DX, q_C, m_kg)
+        k3   = _dynamics(t + 3*dt/10, y3, adj3, phi_arrs, NX, NY, NZ, DX, q_C, m_kg)
 
         y4   = y + dt * (a41*k1 + a42*k2 + a43*k3)
         adj4 = compute_voltages(t + 4*dt/5, sched, trig_fired, trig_fire_time,
                                 omega_rf, omega_rf3, V0_default, V0_3_default,
                                 trig_for_elec)
-        k4   = _dynamics(t + 4*dt/5, y4, adj4, E_fields, NX, NY, NZ, DX, q_C, m_kg)
+        k4   = _dynamics(t + 4*dt/5, y4, adj4, phi_arrs, NX, NY, NZ, DX, q_C, m_kg)
 
         y5   = y + dt * (a51*k1 + a52*k2 + a53*k3 + a54*k4)
         adj5 = compute_voltages(t + 8*dt/9, sched, trig_fired, trig_fire_time,
                                 omega_rf, omega_rf3, V0_default, V0_3_default,
                                 trig_for_elec)
-        k5   = _dynamics(t + 8*dt/9, y5, adj5, E_fields, NX, NY, NZ, DX, q_C, m_kg)
+        k5   = _dynamics(t + 8*dt/9, y5, adj5, phi_arrs, NX, NY, NZ, DX, q_C, m_kg)
 
         y6   = y + dt * (a61*k1 + a62*k2 + a63*k3 + a64*k4 + a65*k5)
         adj6 = compute_voltages(t + dt, sched, trig_fired, trig_fire_time,
                                 omega_rf, omega_rf3, V0_default, V0_3_default,
                                 trig_for_elec)
-        k6   = _dynamics(t + dt, y6, adj6, E_fields, NX, NY, NZ, DX, q_C, m_kg)
+        k6   = _dynamics(t + dt, y6, adj6, phi_arrs, NX, NY, NZ, DX, q_C, m_kg)
 
         # 5th-order solution
         y_new = y + dt * (b1*k1 + b3*k3 + b4*k4 + b5*k5 + b6*k6)
@@ -696,7 +709,7 @@ def integrate_particle(ion_num, y0, t_start, sim_params, sched, E_fields, grid):
         adj7 = compute_voltages(t + dt, sched, trig_fired, trig_fire_time,
                                 omega_rf, omega_rf3, V0_default, V0_3_default,
                                 trig_for_elec)
-        k7   = _dynamics(t + dt, y_new, adj7, E_fields, NX, NY, NZ, DX, q_C, m_kg)
+        k7   = _dynamics(t + dt, y_new, adj7, phi_arrs, NX, NY, NZ, DX, q_C, m_kg)
 
         # Error vector (5th − 4th order) = h * sum(e_i * k_i)
         err_vec = dt * (e1*k1 + e3*k3 + e4*k4 + e5*k5 + e6*k6 + e7*k7)
@@ -788,14 +801,22 @@ def integrate_particle(ion_num, y0, t_start, sim_params, sched, E_fields, grid):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _worker(args):
-    """Entry point for multiprocessing.Pool workers."""
-    ion_num, y0, t_start, sim_params, sched, E_fields, grid = args
+    """Entry point for multiprocessing.Pool workers.
+
+    phi_arrs and grid are taken from the module globals _worker_phi_arrs /
+    _worker_grid, which are set either by _shm_initializer (multiprocessing)
+    or directly in main() (single-process mode).  This avoids pickling the
+    large potential arrays into every task argument.
+    """
+    ion_num, y0, t_start, sim_params, sched = args
+    phi_arrs = _worker_phi_arrs
+    grid     = _worker_grid
     print(f"  [ion {ion_num}] starting at GEM "
           f"({y0[0]:.2f}, {y0[1]:.2f}, {y0[2]:.2f}) mm, "
           f"v=({y0[3]:.4g}, {y0[4]:.4g}, {y0[5]:.4g}) mm/µs",
           flush=True)
     t0 = time.perf_counter()
-    rows, info = integrate_particle(ion_num, y0, t_start, sim_params, sched, E_fields, grid)
+    rows, info = integrate_particle(ion_num, y0, t_start, sim_params, sched, phi_arrs, grid)
     elapsed = time.perf_counter() - t0
     print(f"  [ion {ion_num}] done: {info['steps_accepted']} steps, "
           f"{info['t_sim_us']:.1f} µs simulated, "
@@ -896,11 +917,13 @@ def main():
     print(f"  Simulation time: 0 → {t_max_us:.0f} µs")
 
     # ── Load PA files ────────────────────────────────────────────────────────
-    print("\nLoading PA files and pre-computing E-field arrays …")
+    print("\nLoading PA files (unit-potential φ arrays) …")
     t_pa_start = time.perf_counter()
-    E_fields, grid = load_all_pa(BASE)
+    phi_arrs, grid = load_all_phi(BASE)
     t_pa_end = time.perf_counter()
-    print(f"  PA loading complete in {t_pa_end - t_pa_start:.1f} s")
+    mem_mb = sum(p.nbytes for p in phi_arrs) / 1e6
+    print(f"  PA loading complete in {t_pa_end - t_pa_start:.1f} s  "
+          f"({mem_mb:.0f} MB total φ memory)")
     print(f"  Grid: {grid['NX']}×{grid['NY']}×{grid['NZ']},  DX={grid['DX']} mm")
 
     # ── Particle starts ──────────────────────────────────────────────────────
@@ -965,7 +988,21 @@ def main():
             pressure_ramp=pressure_ramp_cfg,
         )
 
-        ion_args.append((ion_num, y0, 0.0, sim_params, sched, E_fields, grid))
+        ion_args.append((ion_num, y0, 0.0, sim_params, sched))
+
+    # ── Copy φ arrays into shared memory ────────────────────────────────────
+    # Workers attach to these blocks via _shm_initializer; no pickling of the
+    # large arrays into per-task arguments.
+    shm_blocks = []
+    shm_names  = []
+    shm_shapes = []
+    for phi in phi_arrs:
+        shm = multiprocessing.shared_memory.SharedMemory(create=True, size=phi.nbytes)
+        buf = np.ndarray(phi.shape, dtype=phi.dtype, buffer=shm.buf)
+        np.copyto(buf, phi)
+        shm_blocks.append(shm)
+        shm_names.append(shm.name)
+        shm_shapes.append(phi.shape)
 
     # ── Run integrations ─────────────────────────────────────────────────────
     out_path = os.path.join(BASE, f"trajectories_{args.run}.csv")
@@ -974,16 +1011,29 @@ def main():
     t_sim_start = time.perf_counter()
 
     all_results = []
-    if n_workers == 1:
-        # Single-process: run directly (easier to debug)
-        for arg in ion_args:
-            result = _worker(arg)
-            all_results.append(result)
-    else:
-        ctx = multiprocessing.get_context("spawn")
-        with ctx.Pool(processes=n_workers) as pool:
-            for result in pool.imap_unordered(_worker, ion_args):
+    try:
+        if n_workers == 1:
+            # Single-process: set globals directly (no spawn overhead)
+            global _worker_phi_arrs, _worker_grid
+            _worker_phi_arrs = phi_arrs
+            _worker_grid     = grid
+            for arg in ion_args:
+                result = _worker(arg)
                 all_results.append(result)
+        else:
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(processes=n_workers,
+                          initializer=_shm_initializer,
+                          initargs=(shm_names, shm_shapes, grid)) as pool:
+                for result in pool.imap_unordered(_worker, ion_args):
+                    all_results.append(result)
+    finally:
+        for shm in shm_blocks:
+            try:
+                shm.close()
+                shm.unlink()
+            except Exception:
+                pass
 
     t_sim_end = time.perf_counter()
 
