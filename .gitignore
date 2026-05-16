@@ -4,3 +4,6 @@
 *.iob
 *.csv
 .DS_STORE
+__pycache__/
+*.pyc
+.gitignore~

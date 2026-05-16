@@ -1,0 +1,67 @@
+# geometry.yaml  –  Trap geometry for trapsim.
+#
+# Edit this file when porting trapsim to a new trap geometry.  Every other
+# file in the pipeline reads electrode and dielectric names from here.
+#
+# Coordinate convention: Fusion world (mm).  The simulation grid is the
+# rectangular box defined by `grid.bounds_mm` below; the GEM offset used
+# internally by SIMION-compatible PA files is derived as -bounds_mm[*][0].
+#
+# Each electrode is one independent Laplace solve.  STLs listed under the
+# same electrode are wired together (single voltage source).  Electrodes are
+# assigned an integer id from 1..N in the order declared below, which is
+# the suffix on the output PA file (paulTrap.pa<id>).
+
+grid:
+  dx_mm: 0.5
+  bounds_mm:
+    x: [-25.0,  40.0]
+    y: [ -8.0,  37.0]
+    z: [-132.0, 295.0]
+
+electrodes:
+  - name: rf_loading
+    stls:
+      - stl/rod_1_TL.stl
+      - stl/rod_1_BR.stl
+      - stl/rod_2_TL.stl
+      - stl/rod_2_BR.stl
+  - name: rf_loading_inv
+    stls:
+      - stl/rod_1_TR.stl
+      - stl/rod_1_BL.stl
+      - stl/rod_2_TR.stl
+      - stl/rod_2_BL.stl
+  - name: endcap_load_U
+    stls: [stl/endcap_load_U.stl]
+  - name: endcap_load_D
+    stls: [stl/endcap_load_D.stl]
+  - name: rod_3_TL
+    stls: [stl/rod_3_TL.stl]
+  - name: rod_3_TR
+    stls: [stl/rod_3_TR.stl]
+  - name: rod_3_BL
+    stls: [stl/rod_3_BL.stl]
+  - name: rod_3_BR
+    stls: [stl/rod_3_BR.stl]
+  - name: endcap_optical_U
+    stls: [stl/endcap_optical_U.stl]
+  - name: endcap_optical_D
+    stls: [stl/endcap_optical_D.stl]
+
+dielectrics:
+  - name: trapping_lens
+    stl: stl/trapping_lens.stl
+    epsilon_r: 3.0
+  - name: collection_lens
+    stl: stl/collection_lens.stl
+    epsilon_r: 3.0
+  - name: lens_holder
+    stl: stl/lens_holder.stl
+    epsilon_r: 3.0
+
+# Bodies drawn in visualize.py but with no field contribution.
+decoration:
+  - name: ring_brake
+    stl: stl/ring_brake.stl
+    color: [0.5, 0.5, 0.5]
