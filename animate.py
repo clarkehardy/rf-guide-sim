@@ -17,6 +17,7 @@ Usage
 """
 
 import argparse
+import importlib.util
 import os
 import re
 import struct
@@ -223,24 +224,44 @@ def load_voltages(path):
     return {k: np.array(v) for k, v in cols.items()}
 
 
-def load_n_particles(config_path):
-    """Read particles.n from trap_config.lua; returns None if not found."""
+def load_config(config_path):
+    """Return (n_particles, triggers) from either trap_config.py or trap_config.lua.
+
+    trap_config.py  (new pure-Python pipeline):
+        Imports the module with importlib and reads config["particles"]["n"]
+        and config["triggers"].
+
+    trap_config.lua  (legacy SIMION pipeline):
+        Regex-parses the Lua source for the same fields.
+
+    Returns (None, []) if the file is absent or unparseable.
+    """
     if not os.path.exists(config_path):
-        return None
+        return None, []
+
+    if config_path.endswith(".py"):
+        try:
+            spec   = importlib.util.spec_from_file_location("trap_config", config_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            cfg = module.config
+            n = cfg.get("particles", {}).get("n", None)
+            triggers = [
+                {"z_mm": float(t["z_mm"]),
+                 "electrodes": list(t.get("electrodes", []))}
+                for t in cfg.get("triggers", [])
+            ]
+            return n, triggers
+        except Exception as e:
+            print(f"  Warning: could not load {config_path}: {e}")
+            return None, []
+
+    # Lua fallback
     with open(config_path) as f:
         text = f.read()
     text = re.sub(r'--[^\n]*', '', text)
     m = re.search(r'\bparticles\b.*?\bn\s*=\s*(\d+)', text, re.DOTALL)
-    return int(m.group(1)) if m else None
-
-
-def load_triggers(config_path):
-    """Parse active trigger entries from trap_config.lua."""
-    if not os.path.exists(config_path):
-        return []
-    with open(config_path) as f:
-        text = f.read()
-    text = re.sub(r'--[^\n]*', '', text)   # strip Lua line comments
+    n = int(m.group(1)) if m else None
     triggers = []
     for m in re.finditer(
         r'\{\s*z_mm\s*=\s*([\d.e+\-]+)\s*,\s*electrodes\s*=\s*\{([^}]*)\}',
@@ -250,7 +271,7 @@ def load_triggers(config_path):
             'z_mm':       float(m.group(1)),
             'electrodes': [int(x) for x in re.findall(r'\d+', m.group(2))],
         })
-    return triggers
+    return n, triggers
 
 
 def compute_fire_times(ions, triggers):
@@ -359,8 +380,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--traj",   default=os.path.join(BASE, "trajectories_1.csv"))
     ap.add_argument("--volt",   default=os.path.join(BASE, "voltages_1.csv"))
-    ap.add_argument("--config", default=os.path.join(BASE, "trap_config.lua"),
-                    help="Path to trap_config.lua (for trigger overlays)")
+    ap.add_argument("--config", default=os.path.join(BASE, "trap_config.py"),
+                    help="Path to trap_config.py (or .lua) for trigger overlays")
     ap.add_argument("--fps",   type=float, default=30.0)
     ap.add_argument("--speed", type=float, default=None,
                     help="µs of sim time per wall-second (default: 20 s total)")
@@ -373,14 +394,13 @@ def main():
 
     # Keep only the first n ion IDs (by sorted order) to exclude workbench
     # placeholder ions that are terminated on the first timestep.
-    n_cfg = load_n_particles(args.config)
+    n_cfg, triggers = load_config(args.config)
     if n_cfg is not None and len(ions) > n_cfg:
         keep = sorted(ions.keys())[:n_cfg]
         print(f"  Showing {n_cfg} of {len(ions)} ions (filtered by particles.n in config)")
         ions = {k: ions[k] for k in keep}
 
     _TRIG_PALETTE = ["darkorchid", "tomato", "mediumseagreen", "saddlebrown"]
-    triggers   = load_triggers(args.config)
     trig_colors = [_TRIG_PALETTE[i % len(_TRIG_PALETTE)] for i in range(len(triggers))]
     fire_times  = compute_fire_times(ions, triggers) if ions else []
     if triggers and not ions:
