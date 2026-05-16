@@ -19,7 +19,7 @@
 local D = "C:\\users\\crossover\\Documents\\Research\\Nanospheres\\SIMION\\RF Guide\\"
 
 local N_ELECTRODES = 10   -- electrodes 1–10 (dielectrics are not in the electric PA)
-local CONVERGENCE  = 1e-7 -- refine convergence criterion
+local CONVERGENCE  = 5e-3 -- refine convergence criterion
 
 -- ── Open the dielectric permittivity array ────────────────────────────────────
 local di_path = D .. "paulTrap-dielectric.pa"

@@ -99,7 +99,7 @@ V_endcap_optical_D = np.zeros_like(times)
 # Independent, finer time axis.  Time is measured from trigger-fire, not
 # absolute simulation time.  paulTrap.lua prefers these columns over the
 # V_endcap_optical_U/D fallback columns above.
-max_time_trig = 10000          # µs — total duration of the post-trigger schedule
+max_time_trig = 1000000          # µs — total duration of the post-trigger schedule
 dt_trig       = 10           # µs — time step (finer than the main schedule)
 times_trig    = np.arange(0, max_time_trig + dt_trig / 2, dt_trig)
 
@@ -117,6 +117,16 @@ V_e5_trig = np.zeros_like(times_trig)   # rod_3_TL DC trim
 V_e6_trig = np.zeros_like(times_trig)   # rod_3_TR DC trim
 V_e7_trig = np.zeros_like(times_trig)   # rod_3_BL DC trim
 V_e8_trig = np.zeros_like(times_trig)   # rod_3_BR DC trim
+
+V_e5_trig[times_trig > 1e5] = -(times_trig[times_trig > 1e5] - 1e5) * 15.0 / 1e5
+V_e6_trig[times_trig > 1e5] = (times_trig[times_trig > 1e5] - 1e5) * 15.0 / 1e5
+V_e7_trig[times_trig > 1e5] = -(times_trig[times_trig > 1e5] - 1e5) * 15.0 / 1e5
+V_e8_trig[times_trig > 1e5] = (times_trig[times_trig > 1e5] - 1e5) * 15.0 / 1e5
+
+V_e5_trig[times_trig > 2e5] = 15.0
+V_e6_trig[times_trig > 2e5] = -15.0
+V_e7_trig[times_trig > 2e5] = -15.0
+V_e8_trig[times_trig > 2e5] = 15.0
 
 # ── Assemble schedule ─────────────────────────────────────────────────────────
 COLUMNS = [

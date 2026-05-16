@@ -17,7 +17,7 @@ set -euo pipefail
 
 # ── Fixed paths ───────────────────────────────────────────────────────────────
 DIR="$(cd "$(dirname "$0")" && pwd)"
-PYTHON="$HOME/.venvs/nano/bin/python3"
+PYTHON="$HOME/.venvs/mesh/bin/python3"
 WINE="$HOME/Applications/CrossOver.app/Contents/SharedSupport/CrossOver/bin/wine"
 WINEPREFIX="$HOME/Library/Application Support/CrossOver/Bottles/Windows 10 64-bit"
 SIMION_EXE='C:\Program Files\SIMION-2024\simion.exe'

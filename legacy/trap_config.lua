@@ -67,7 +67,7 @@ return {
   -- sigma_mm:  Gaussian 1-σ spread per axis {x,y,z} in mm; omit or zero for point source
   -- Multiple starts entries are assigned round-robin by ion number.
   particles = {
-    n      = 5,
+    n      = 20,
     charge = 100,
     starts = {
       -- PLACEHOLDER: set start position to inside the loading Paul trap (sets 1+2),
