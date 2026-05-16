@@ -20,7 +20,6 @@ import argparse
 import importlib.util
 import math
 import multiprocessing
-import multiprocessing.shared_memory
 import os
 import re
 import struct
@@ -33,7 +32,7 @@ import numpy as np
 BASE = os.path.dirname(os.path.abspath(__file__))
 
 # ── Globals shared across worker processes ────────────────────────────────────
-# Set by _shm_initializer (multiprocessing) or directly in single-process mode.
+# Set by main() before forking; workers inherit via copy-on-write.
 # _worker_phi_stack shape: (N_ELEC, NZ, NY, NX) — all 10 unit-potential arrays stacked.
 _worker_phi_stack = None
 _worker_grid      = None
@@ -446,20 +445,6 @@ def _phi_grad_all(phi_stack, NX, NY, NZ, DX, px, py, pz):
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared-memory worker initializer
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _shm_initializer(shm_name, shm_shape, grid):
-    """Attach to the shared phi_stack block in each worker process.
-
-    Called once per worker at pool startup.  Sets the module globals
-    _worker_phi_stack and _worker_grid so that _worker() can access the
-    potential arrays without any per-task data transfer (no pickle overhead).
-    """
-    global _worker_phi_stack, _worker_grid
-    shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
-    _worker_phi_stack = np.ndarray(shm_shape, dtype=np.float64, buffer=shm.buf)
-    # shm handle is intentionally kept open for the worker's lifetime
-    _worker_grid = grid
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Voltage computation (fast_adjust equivalent)
@@ -874,8 +859,8 @@ def _worker(args):
     """Entry point for multiprocessing.Pool workers.
 
     phi_stack and grid are taken from the module globals _worker_phi_stack /
-    _worker_grid, which are set either by _shm_initializer (multiprocessing)
-    or directly in main() (single-process mode).  This avoids pickling the
+    _worker_grid, set by main() before the fork so all child processes inherit
+    them via copy-on-write with no serialisation.  This avoids pickling the
     large potential arrays into every task argument.
     """
     ion_num, y0, t_start, sim_params, sched = args
@@ -1060,12 +1045,14 @@ def main():
 
         ion_args.append((ion_num, y0, 0.0, sim_params, sched))
 
-    # ── Copy phi_stack into a single shared memory block ─────────────────────
-    # Workers attach via _shm_initializer; no per-task pickle of the arrays.
-    shm = multiprocessing.shared_memory.SharedMemory(create=True, size=phi_stack.nbytes)
-    shm_buf = np.ndarray(phi_stack.shape, dtype=phi_stack.dtype, buffer=shm.buf)
-    np.copyto(shm_buf, phi_stack)
-    del phi_stack   # parent no longer needs its own copy
+    # ── Make phi_stack and grid available to worker processes ────────────────
+    # Workers use module-level globals set here.  With fork (below), children
+    # inherit these globals via copy-on-write — zero serialisation overhead,
+    # no SharedMemory handles to lose.  On macOS, fork is explicitly requested
+    # even though Python 3.8+ defaults to spawn on that platform.
+    global _worker_phi_stack, _worker_grid
+    _worker_phi_stack = phi_stack
+    _worker_grid      = grid
 
     # ── Run integrations ─────────────────────────────────────────────────────
     out_path = os.path.join(BASE, f"trajectories_{args.run}.csv")
@@ -1074,28 +1061,20 @@ def main():
     t_sim_start = time.perf_counter()
 
     all_results = []
-    try:
-        if n_workers == 1:
-            # Single-process: set globals directly (no spawn overhead)
-            global _worker_phi_stack, _worker_grid
-            _worker_phi_stack = shm_buf
-            _worker_grid      = grid
-            for arg in ion_args:
-                result = _worker(arg)
+    if n_workers == 1:
+        # Single-process: run directly (easiest to debug)
+        for arg in ion_args:
+            result = _worker(arg)
+            all_results.append(result)
+    else:
+        # fork: workers inherit phi_stack from parent via copy-on-write pages.
+        # No per-task serialisation of the 780 MB array.  Reading (no writes)
+        # means pages are physically shared — memory footprint stays at ~780 MB
+        # regardless of worker count.
+        ctx = multiprocessing.get_context("fork")
+        with ctx.Pool(processes=n_workers) as pool:
+            for result in pool.imap_unordered(_worker, ion_args):
                 all_results.append(result)
-        else:
-            ctx = multiprocessing.get_context("spawn")
-            with ctx.Pool(processes=n_workers,
-                          initializer=_shm_initializer,
-                          initargs=(shm.name, shm_buf.shape, grid)) as pool:
-                for result in pool.imap_unordered(_worker, ion_args):
-                    all_results.append(result)
-    finally:
-        try:
-            shm.close()
-            shm.unlink()
-        except Exception:
-            pass
 
     t_sim_end = time.perf_counter()
 
