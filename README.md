@@ -1,20 +1,18 @@
-# trapsim
+# RF Guide Simulation
 
-Geometry-agnostic particle integrator for arbitrary electrode trap geometries. Replaces the SIMION 2024 workflow with a pure-Python pipeline (C++ Laplace solver + Python integrator) driven by a single `geometry.yaml`.
-
-The original Paul-trap-loading-via-RF-guide simulation that motivated this code ships as the default example: 166 nm silica nanospheres travelling 400 mm down an RF guide through a gate valve into an optical Paul trap. Any other electrode geometry works by editing two files — `geometry.yaml` and `experiment.py`.
+Simulation of 166 nm silica nanospheres travelling 400 mm down a linear Paul trap RF guide, through a gate valve, into an optical Paul trap. Built on [`trapsim`](https://github.com/clarkehardy/trapsim) — a geometry-agnostic particle integrator for electrode trap simulations.
 
 ---
 
 ## Installation
 
 ```
-brew install libomp                # optional, parallelises the solver
-~/.venvs/mesh/bin/pip install pyyaml trimesh numpy matplotlib pyvista
-make -C solver                     # compiles solver/laplace once
+pip install -r requirements.txt
 ```
 
-Tested with Python 3.12 on macOS (M-series and Intel). The C++ solver uses only Xcode Command Line Tools — no external dependencies.
+This installs `trapsim[all]` from GitHub, which brings in numpy, pyyaml, trimesh, matplotlib, and pyvista. The C++ Laplace solver compiles automatically on first use (needs Xcode CLT on macOS or `build-essential` on Linux).
+
+Tested with Python 3.12 on macOS (M-series and Intel).
 
 ---
 
@@ -247,25 +245,14 @@ The simulation volume (`grid.bounds_mm`) must enclose every body. The grid spaci
 
 ```
 geometry.yaml          object inventory + grid (edit for a new geometry)
-experiment.py          particles, schedule, triggers, physics  (edit for a new run)
-run.py                 pipeline entry point
-stl/                   STL bodies
-
-trapsim/               the geometry-agnostic package
-  config.py            geometry.yaml loader + validation
-  voxelize.py          STL → solver masks
-  refine.py            orchestrates voxelize + C++ solve
-  fly.py               particle integrator
-  schedule.py          schedule + trigger resolution
-  physics/             pluggable physics modules
-    base.py electrostatic.py gravity.py epstein_drag.py langevin.py
-  io/                  PA / trajectory / schedule readers and writers
-  viz/                 animate, visualize, plot_field
-  run.py               full-pipeline orchestrator
-
-solver/                C++ Laplace solver (laplace.cpp + Makefile)
+experiment.py          particles, schedule, triggers, physics (edit for a new run)
+run.py                 pipeline entry point (thin wrapper around trapsim.run)
+requirements.txt       pip dependency (trapsim from GitHub)
+stl/                   STL bodies (gitignored; export from Fusion)
 legacy/                pre-refactor scripts (SIMION + early Python pipeline)
 ```
+
+The `trapsim` package is developed at [github.com/clarkehardy/trapsim](https://github.com/clarkehardy/trapsim). The C++ solver source and compiled binary live in `solver/` (auto-created on first `trapsim` run; gitignored).
 
 ---
 

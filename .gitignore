@@ -3,7 +3,13 @@
 *.fly2
 *.iob
 *.csv
+*.json
+*.gif
+*.png
+*.mp4
 .DS_STORE
 __pycache__/
 *.pyc
 .gitignore~
+solver/
+.venv/
