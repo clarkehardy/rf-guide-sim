@@ -42,7 +42,7 @@ physics = [
     Gravity(g_mm_us2=9.81e-9, axis="-y"),
     EpsteinDrag(
         pressure_pa=0.1, temperature_k=293, gas_mass_amu=28.0,
-        pressure_ramp={"trigger":     "release",
+        pressure_ramp={"trigger":     "catch_sphere",
                        "p_final_pa":  100.0,
                        "duration_us": 5e5},
         scale=1.0,
@@ -62,7 +62,7 @@ integrator = {
 }
 
 # ── Main voltage schedule ─────────────────────────────────────────────────
-t = np.linspace(0, 2e5, 1000)
+t = np.linspace(0, 5e5, 1000)
 RF_FREQ_HZ = 2000.0
 ones = np.ones_like(t)
 zero = np.zeros_like(t)
@@ -114,7 +114,7 @@ ramp   = np.where(
 
 triggers = [
     {
-        "name":         "drop_load_endcap",
+        "name":         "throw_sphere",
         "axis":         "z",
         "threshold_mm": -83.52,
         "schedule": {
@@ -123,7 +123,7 @@ triggers = [
         },
     },
     {
-        "name":         "release",
+        "name":         "catch_sphere",
         "axis":         "z",
         "threshold_mm": 272.0,
         "schedule": {

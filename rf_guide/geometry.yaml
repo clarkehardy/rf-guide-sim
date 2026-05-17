@@ -16,7 +16,7 @@
 # Both are used only by trapsim.viz.
 
 grid:
-  dx_mm: 0.5
+  dx_mm: 0.25
   bounds_mm:
     x: [-25.0,  40.0]
     y: [ -8.0,  37.0]
@@ -82,6 +82,6 @@ dielectrics:
 
 # Bodies drawn in visualize.py but with no field contribution.
 decoration:
-  - name: ring_brake
-    stl: stl/ring_brake.stl
+  - name: gate_valve
+    stl: stl/gate_valve.stl
     color: [0.5, 0.5, 0.5]
