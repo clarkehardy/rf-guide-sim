@@ -1,6 +1,6 @@
 # RF Guide Simulation
 
-Two particle-in-trap simulations of the loading chain for an optical Paul trap, built on [`trapsim`](https://github.com/clarkehardy/trapsim).
+Two particle-in-trap simulations of the loading chain for an optical trap, built on [`trapsim`](https://github.com/clarkehardy/trapsim).
 
 | Simulation | Directory | Particle | Drag regime | RF | Purpose |
 |---|---|---|---|---|---|
@@ -68,7 +68,7 @@ For full CLI flags and output format details see the [trapsim README](https://gi
 | `rf_loading` | rod sets 1 & 2 TL/BR | +RF loading guide |
 | `rf_loading_inv` | rod sets 1 & 2 TR/BL | −RF loading guide |
 | `endcap_load_U/D` | upstream endcaps | axial confinement in loading region |
-| `rod_3_TL/TR/BL/BR` | rod set 3 (individual) | DC trims + RF for optical Paul trap |
+| `rod_3_TL/TR/BL/BR` | rod set 3 (individual) | DC trims + RF for optical trap electrodes |
 | `endcap_optical_U/D` | optical trap endcaps | axial confinement in trapping region |
 
 | Dielectric | ε_r | Role |
@@ -122,7 +122,7 @@ The −y axis means the trigger fires on a downward-going (negative y) crossing:
 
 ```
 rf_guide/
-  geometry.yaml     10-electrode RF guide + optical Paul trap geometry
+  geometry.yaml     10-electrode RF guide + optical trap electrode geometry
   experiment.py     nanosphere params, Epstein drag, loading triggers
   run.py            trapsim.run shim
   solver/           compiled solver + voxel masks (gitignored, auto-created)
