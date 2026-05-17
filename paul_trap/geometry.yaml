@@ -25,25 +25,25 @@ grid:
 electrodes:
   - name: rf_loading
     stls:
-      - ../stl/PT_rod_TL.stl
-      - ../stl/PT_rod_BR.stl
+      - stl/PT_rod_TL.stl
+      - stl/PT_rod_BR.stl
     color: [0.85, 0.20, 0.15]   # warm red — +RF
   - name: rf_loading_inv
     stls:
-      - ../stl/PT_rod_TR.stl
-      - ../stl/PT_rod_BL.stl
+      - stl/PT_rod_TR.stl
+      - stl/PT_rod_BL.stl
     color: [0.20, 0.45, 0.80]   # steel blue — −RF
   - name: endcap_load_U
-    stls: [../stl/endcap_load_U.stl]
+    stls: [stl/endcap_load_U.stl]
     color: [0.15, 0.70, 0.55]
     opacity: 0.55
   - name: endcap_load_D
-    stls: [../stl/endcap_load_D.stl]
+    stls: [stl/endcap_load_D.stl]
     color: [0.15, 0.70, 0.55]
     opacity: 0.55
 
 dielectrics:
   - name: electrode_holder
-    stl: ../stl/electrode_holder.stl
+    stl: stl/electrode_holder.stl
     epsilon_r: 3.0
     color: [0.50, 0.90, 0.95]

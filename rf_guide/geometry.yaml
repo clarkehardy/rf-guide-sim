@@ -25,63 +25,63 @@ grid:
 electrodes:
   - name: rf_loading
     stls:
-      - ../stl/rod_1_TL.stl
-      - ../stl/rod_1_BR.stl
-      - ../stl/rod_2_TL.stl
-      - ../stl/rod_2_BR.stl
+      - stl/rod_1_TL.stl
+      - stl/rod_1_BR.stl
+      - stl/rod_2_TL.stl
+      - stl/rod_2_BR.stl
     color: [0.85, 0.20, 0.15]   # warm red — +RF
   - name: rf_loading_inv
     stls:
-      - ../stl/rod_1_TR.stl
-      - ../stl/rod_1_BL.stl
-      - ../stl/rod_2_TR.stl
-      - ../stl/rod_2_BL.stl
+      - stl/rod_1_TR.stl
+      - stl/rod_1_BL.stl
+      - stl/rod_2_TR.stl
+      - stl/rod_2_BL.stl
     color: [0.20, 0.45, 0.80]   # steel blue — −RF
   - name: endcap_load_U
-    stls: [../stl/endcap_load_U.stl]
+    stls: [stl/endcap_load_U.stl]
     color: [0.15, 0.70, 0.55]
     opacity: 0.55
   - name: endcap_load_D
-    stls: [../stl/endcap_load_D.stl]
+    stls: [stl/endcap_load_D.stl]
     color: [0.15, 0.70, 0.55]
     opacity: 0.55
   - name: rod_3_TL
-    stls: [../stl/rod_3_TL.stl]
+    stls: [stl/rod_3_TL.stl]
     color: [1.00, 0.45, 0.20]
   - name: rod_3_TR
-    stls: [../stl/rod_3_TR.stl]
+    stls: [stl/rod_3_TR.stl]
     color: [1.00, 0.65, 0.20]
   - name: rod_3_BL
-    stls: [../stl/rod_3_BL.stl]
+    stls: [stl/rod_3_BL.stl]
     color: [0.35, 0.55, 0.85]
   - name: rod_3_BR
-    stls: [../stl/rod_3_BR.stl]
+    stls: [stl/rod_3_BR.stl]
     color: [0.55, 0.65, 0.85]
   - name: endcap_optical_U
-    stls: [../stl/endcap_optical_U.stl]
+    stls: [stl/endcap_optical_U.stl]
     color: [0.10, 0.55, 0.30]
     opacity: 0.55
   - name: endcap_optical_D
-    stls: [../stl/endcap_optical_D.stl]
+    stls: [stl/endcap_optical_D.stl]
     color: [0.10, 0.55, 0.30]
     opacity: 0.55
 
 dielectrics:
   - name: trapping_lens
-    stl: ../stl/trapping_lens.stl
+    stl: stl/trapping_lens.stl
     epsilon_r: 3.0
     color: [0.50, 0.90, 0.95]
   - name: collection_lens
-    stl: ../stl/collection_lens.stl
+    stl: stl/collection_lens.stl
     epsilon_r: 3.0
     color: [0.50, 0.90, 0.95]
   - name: lens_holder
-    stl: ../stl/lens_holder.stl
+    stl: stl/lens_holder.stl
     epsilon_r: 3.0
     color: [0.85, 0.80, 0.65]
 
 # Bodies drawn in visualize.py but with no field contribution.
 decoration:
   - name: gate_valve
-    stl: ../stl/gate_valve.stl
+    stl: stl/gate_valve.stl
     color: [0.5, 0.5, 0.5]
