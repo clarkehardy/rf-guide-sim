@@ -46,9 +46,9 @@ Output files are written into the simulation folder alongside `geometry.yaml`:
 
 | File | Contents |
 |---|---|
-| `field.pa<N>` | Unit-potential array for electrode N (SIMION-compatible binary) |
 | `trajectories_<N>.csv` | Particle trajectories in Fusion-world mm |
 | `schedule_<N>.json` | Voltage schedule snapshot used for this run |
+| `solver/field.pa<N>` | Unit-potential array for electrode N (SIMION-compatible binary; auto-created, gitignored) |
 | `solver/` | Compiled C++ solver binary and voxel masks (auto-created; gitignored) |
 
 For full CLI flags and output format details see the [trapsim README](https://github.com/clarkehardy/trapsim).
