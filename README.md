@@ -1,269 +1,155 @@
 # RF Guide Simulation
 
-Simulation of 166 nm silica nanospheres travelling 400 mm down a linear Paul trap RF guide, through a gate valve, into an optical Paul trap. Built on [`trapsim`](https://github.com/clarkehardy/trapsim) — a geometry-agnostic particle integrator for electrode trap simulations.
+Two particle-in-trap simulations of the loading chain for an optical Paul trap, built on [`trapsim`](https://github.com/clarkehardy/trapsim).
+
+| Simulation | Directory | Particle | Drag regime | RF | Purpose |
+|---|---|---|---|---|---|
+| RF guide | `rf_guide/` | 166 nm SiO₂ nanosphere, 100e | Epstein (free molecular, Kn ~ 800) | 2 kHz, ±10 V | Guide sphere ~400 mm through a linear Paul trap RF guide into an optical trap |
+| Paul trap | `paul_trap/` | 20 µm ethanol droplet, 10⁶e | Continuum (Stokes / Schiller-Naumann) | 1 kHz, 200 V | Drop falls under gravity; RF switches on mid-fall to catch it |
+
+Both simulations share the STL library in `stl/`.
 
 ---
 
 ## Installation
 
 ```
+git clone https://github.com/clarkehardy/rf-guide-sim
+cd rf-guide-sim
 pip install -r requirements.txt
 ```
 
-This installs `trapsim[all]` from GitHub, which brings in numpy, pyyaml, trimesh, matplotlib, and pyvista. The C++ Laplace solver compiles automatically on first use (needs Xcode CLT on macOS or `build-essential` on Linux).
+This installs `trapsim[all]` from GitHub, bringing in numpy, pyyaml, trimesh, matplotlib, and pyvista. The C++ Laplace solver compiles automatically on first use (needs Xcode CLT on macOS or `build-essential` on Linux).
 
-Tested with Python 3.12 on macOS (M-series and Intel).
-
----
-
-## Quickstart
-
-```
-git clone <this repo>
-cd <repo>
-python run.py                      # refine if needed → fly → animate → visualize
-```
-
-That runs the included Paul-trap example: 20 particles, ~5 s wall on an M-series Mac.
-
-Output files (alongside the source):
-
-- `paulTrap.pa<N>` — unit-potential array per electrode (SIMION-compatible)
-- `trajectories_1.csv` — recorded trajectories in Fusion-world mm
-- `schedule_1.json` — snapshot of the voltage schedule used (for animate)
+Tested with Python 3.12 on macOS (M-series).
 
 ---
 
-## Defining a new geometry
+## Running a simulation
 
-Two files: **`geometry.yaml`** (what exists) and **`experiment.py`** (what happens).
+Each simulation is self-contained in its subdirectory. `run.py` is a three-line shim that delegates to `trapsim.run`:
 
-### `geometry.yaml`
-
-```yaml
-grid:
-  dx_mm: 0.5
-  bounds_mm:
-    x: [-25.0,  40.0]    # simulation volume in Fusion-world coords
-    y: [ -8.0,  37.0]
-    z: [-132.0, 295.0]
-
-electrodes:
-  - name: rf_loading           # used by the voltage schedule and physics
-    stls:
-      - stl/rod_1_TL.stl       # all listed STLs are wired together
-      - stl/rod_1_BR.stl
-    color: [0.85, 0.20, 0.15]  # optional, RGB 0..1 for visualizations
-  - name: endcap_load_U
-    stls: [stl/endcap_load_U.stl]
-  # … one entry per independent voltage source ...
-
-dielectrics:
-  - name: trapping_lens
-    stl: stl/trapping_lens.stl
-    epsilon_r: 3.0
-
-decoration:                    # bodies drawn but with no field contribution
-  - name: ring_brake
-    stl: stl/ring_brake.stl
+```
+cd rf_guide
+python run.py                             # refine → fly → animate → visualize
+python run.py --no-animate --no-visualize # fly only
+python run.py --run 2                     # second run → trajectories_2.csv
+python run.py --refine                    # force re-solve (needed after geometry changes)
 ```
 
-Each electrode is assigned an integer `electrode_id` (1, 2, …) in declaration order — that's the suffix on `paulTrap.pa<id>`. Re-ordering electrodes re-numbers them.
-
-STL paths are resolved against the YAML's directory, then the repo root, then `stl/` — so `rod_1_TL.stl` and `stl/rod_1_TL.stl` both work.
-
-### `experiment.py`
-
-Plain Python.  Edit the four blocks below to change a run.
-
-```python
-import numpy as np
-from trapsim.physics import Electrostatic, Gravity, EpsteinDrag, Langevin
-
-# (1) Particle and (2) starting conditions
-particle  = {"radius_m": 83e-9, "density_kgm3": 2200, "charge_e": 100}
-particles = {"n": 20,
-             "starts": [{"position_mm": [0.0, 19.0, -98.12],
-                         "ke_ev": 0.0, "direction": [0, 0, 1],
-                         "sigma_mm": [0.0, 0.0, 0.1]}]}
-
-# (3) Physics list — pluggable, see below
-physics = [Electrostatic(),
-           Gravity(),
-           EpsteinDrag(pressure_pa=0.1, temperature_k=293, gas_mass_amu=28.0),
-           Langevin(temperature_k=293)]
-
-# (4) Integrator
-integrator = {"dt_init_us": 1.0, "dt_min_us": 0.01, "dt_max_us": 25.0,
-              "atol": 1e-3, "rtol": 1e-4,
-              "v_stop_mm_us": 1e-6, "record_stride": 20}
-
-# (5) Main voltage schedule
-t = np.linspace(0, 2e5, 1000)
-main_schedule = {
-    "time_us": t,
-    "dc": {"endcap_load_U":  10*np.ones_like(t),
-           "endcap_load_D": -10*np.ones_like(t)},
-    "rf": {"rf_loading":     {"amplitude": 10*np.ones_like(t),
-                              "frequency_hz": 2000, "phase_deg":   0},
-           "rf_loading_inv": {"amplitude": 10*np.ones_like(t),
-                              "frequency_hz": 2000, "phase_deg": 180}},
-}
-
-# (6) Triggers — each fires when pos[axis] >= threshold; its schedule then
-# overrides ONLY the listed electrodes from t_fire onward.  Each trigger has
-# its OWN time array (relative to fire time).
-triggers = [
-    {"name": "drop_load_endcap",
-     "axis": "z", "threshold_mm": -83.52,
-     "schedule": {"time_us": np.array([0, 200, 200.1, 1e6]),
-                  "dc": {"endcap_load_D": np.array([-10, -10, 0, 0])}}},
-]
+```
+cd paul_trap
+python run.py
 ```
 
-Every voltage uses **electrode names**, not numbers. The names must match `geometry.yaml`.
+Output files are written into the simulation folder alongside `geometry.yaml`:
+
+| File | Contents |
+|---|---|
+| `field.pa<N>` | Unit-potential array for electrode N (SIMION-compatible binary) |
+| `trajectories_<N>.csv` | Particle trajectories in Fusion-world mm |
+| `schedule_<N>.json` | Voltage schedule snapshot used for this run |
+| `solver/` | Compiled C++ solver binary and voxel masks (auto-created; gitignored) |
+
+For full CLI flags and output format details see the [trapsim README](https://github.com/clarkehardy/trapsim).
 
 ---
 
-## Writing custom physics modules
+## RF guide simulation (`rf_guide/`)
 
-A physics module overrides any subset of three hooks:
+**Particle:** 166 nm fused-silica nanosphere (ρ = 2200 kg/m³, m ≈ 5.3×10⁻¹⁸ kg), 100 elementary charges. 20 particles launched from z = −98 mm (loading endcap region) with a 0.1 mm axial position spread.
 
-```python
-from trapsim.physics import Physics
-import numpy as np
+**Physics:** Free-molecular (Epstein) drag at 0.1 Pa N₂ gas, T = 293 K. Langevin thermal noise via the fluctuation-dissipation theorem. Pressure ramps from 0.1 Pa → 100 Pa over 0.5 s once the `catch_sphere` trigger fires, damping residual kinetic energy after trapping.
 
-class HarmonicAxialTrap(Physics):
-    def __init__(self, omega_us, z0_mm):
-        self.omega2 = omega_us ** 2; self.z0 = z0_mm
-    def accel(self, t_us, pos_mm, vel_mm_us, env):
-        return np.array([0, 0, -self.omega2 * (pos_mm[2] - self.z0)])
-```
+**Geometry:** 10 electrodes, 3 dielectrics, grid 0.25 mm over x ∈ [−25, 40], y ∈ [−8, 37], z ∈ [−132, 295] mm.
 
-Drop it into `experiment.py`'s `physics = [...]` list. No registration needed.
+| Electrode | Wired bodies | Role |
+|---|---|---|
+| `rf_loading` | rod sets 1 & 2 TL/BR | +RF loading guide |
+| `rf_loading_inv` | rod sets 1 & 2 TR/BL | −RF loading guide |
+| `endcap_load_U/D` | upstream endcaps | axial confinement in loading region |
+| `rod_3_TL/TR/BL/BR` | rod set 3 (individual) | DC trims + RF for optical Paul trap |
+| `endcap_optical_U/D` | optical trap endcaps | axial confinement in trapping region |
 
-The hooks:
+| Dielectric | ε_r | Role |
+|---|---|---|
+| `trapping_lens` | 3.0 | lens in optical trap region |
+| `collection_lens` | 3.0 | collection-side lens |
+| `lens_holder` | 3.0 | lens mount |
 
-| Hook | What it returns | When |
-|------|-----------------|------|
-| `accel(t, pos, vel, env)`         | 3-vec acceleration [mm/µs²] | every RK4/5 stage |
-| `damping_rate(t, pos, vel, env)`  | scalar γ [1/µs] | once per accepted step |
-| `kick(dt, t, pos, vel, env)`      | 3-vec Δv [mm/µs]            | once per accepted step |
+**Voltage scheme:** 2 kHz RF at ±10 V on `rf_loading`/`rf_loading_inv`; DC endcap bias ±10 V in loading region; rod set 3 and optical endcaps initially grounded.
 
-`env` exposes:
-- `env.particle` — dict with `mass_kg`, `charge_C`, `radius_m`, `charge_e`
-- `env.voltages` — `{electrode_name: V}` at the current time
-- `env.field(pos_mm)` — total `(Ex, Ey, Ez)` in V/mm at `pos_mm` (Fusion world)
-- `env.trigger_state` — `{trigger_name: t_fire_µs or None}` for this particle
-- `env.total_damping_rate` — γ summed across all physics (used by Langevin)
-- `env.rng` — `numpy.random.Generator` seeded per particle
+**Triggers:**
 
-The integrator special-cases `damping_rate`: it sums all contributions and applies them via the exact factor `v ← exp(−γ·dt)·v` after each accepted step (better than `accel = −γv` for large dt).
-
-Built-in physics:
-- `Electrostatic()`  — `q·E/m` from `env.field`
-- `Gravity(g_mm_us2=9.81e-9, axis="-y")`
-- `EpsteinDrag(pressure_pa, temperature_k, gas_mass_amu, pressure_ramp=None, scale=1.0)` — `pressure_ramp = {"trigger": "release", "p_final_pa": 100.0, "duration_us": 5e5}` triggers a linear pressure ramp starting at the named trigger's fire time
-- `Langevin(temperature_k)` — FDT noise scaled to `env.total_damping_rate`
+| Trigger | Axis | Threshold | Action |
+|---|---|---|---|
+| `throw_sphere` | z | −83.52 mm | Drops `endcap_load_D` voltage to 0 V over 0.1 µs, releasing the sphere across the gate-valve gap |
+| `catch_sphere` | z | 272 mm | Ramps DC trims on rod set 3 to ±15 V over 0.1 s; pulses optical endcaps to 20 V; begins pressure ramp |
 
 ---
 
-## CLI reference
+## Paul trap simulation (`paul_trap/`)
 
-```
-python run.py                  # full pipeline: refine → fly → animate → visualize
-  --run N                      # writes trajectories_N.csv, schedule_N.json
-  --workers N                  # default = all CPUs
-  --refine                     # force re-refine (voxelize + Laplace solve)
-  --no-fly                     # reuse an existing trajectories_N.csv
-  --no-animate                 # skip the matplotlib animation
-  --no-visualize               # skip the PyVista 3D viewer
+**Particle:** 20 µm ethanol droplet (ρ = 789 kg/m³, m ≈ 3.3×10⁻¹¹ kg), 10⁶ elementary charges. 20 particles start at y = 31 mm (inkjet tip location) with 0.5 mm position spread, falling under gravity.
 
-python -m trapsim.refine [--force-voxelize]            # refine only
-python -m trapsim.fly --run 2 --workers 4              # fly only
-python -m trapsim.viz.animate --traj trajectories_1.csv --schedule schedule_1.json
-python -m trapsim.viz.visualize --animation flythrough.mp4
-python -m trapsim.viz.plot_field --slice y=19 --time 50000 --quantity E
-```
+**Physics:** Continuum drag at atmospheric pressure (`ContinuumDrag`: Schiller-Naumann at Re > 1, Stokes at Re ≤ 1) with air at ρ = 1.225 kg/m³, η = 1.81×10⁻⁵ Pa·s. Langevin thermal noise at 293 K — dormant during free fall (Re ≫ 1, `damping_rate` = 0) and activates automatically once the droplet slows to Re ≤ 1 after trapping.
 
----
+**Geometry:** 4 electrodes, 1 dielectric, grid 0.25 mm over x ∈ [−25, 40], y ∈ [−8, 37], z ∈ [−132, −70] mm.
 
-## Output file formats
+| Electrode | Wired bodies | Role |
+|---|---|---|
+| `rf_loading` | `PT_rod_TL`, `PT_rod_BR` | +RF Paul trap rods |
+| `rf_loading_inv` | `PT_rod_TR`, `PT_rod_BL` | −RF Paul trap rods |
+| `endcap_load_U/D` | Paul trap endcaps | axial confinement (currently unbiased) |
 
-### `paulTrap.pa<N>` — SIMION potential array (binary)
+| Dielectric | ε_r | Role |
+|---|---|---|
+| `electrode_holder` | 3.0 | rod mount structure |
 
-56-byte header (`flags`, `scale_ref`, `NX`, `NY`, `NZ`, `dx`) followed by `NX·NY·NZ` float64 in `[k][j][i]` order (z slowest, x fastest). Electrode-surface voxels encoded with sign-bit or `>1.5·scale_ref`. Free-space voxels store φ/scale_ref where φ is the unit-drive potential. Read via `trapsim.io.pa.read_pa(path)`.
+**Voltage scheme:** RF starts at zero amplitude (trap off). Endcaps unbiased.
 
-### `trajectories_<N>.csv`
+**Trigger:**
 
-```
-ion_id,t_us,x_mm,y_mm,z_mm
-1,0.0000,0.00000,19.00000,-98.04495
-1,456.0000,-0.00463,19.02678,-98.04464
-…
-```
+| Trigger | Axis | Threshold | Action |
+|---|---|---|---|
+| `turn_on_rf` | −y | 19 mm | Droplet falls through y = 19 mm; RF amplitude steps to 200 V at 1 kHz on both rod pairs |
 
-Coordinates are in Fusion-world mm. Recorded once per `record_stride` accepted steps, plus the start and end points.
-
-### `schedule_<N>.json`
-
-```json
-{
-  "main": {
-    "time_us": [...],
-    "dc": {"endcap_load_U": [...], ...},
-    "rf": {"rf_loading": {"amplitude": [...], "frequency_hz": 2000, "phase_deg": 0}}
-  },
-  "triggers": [
-    {"name": "drop_load_endcap", "axis": "z", "threshold_mm": -83.52,
-     "schedule": {"time_us": [...], "dc": {...}}}
-  ]
-}
-```
-
-A serialised copy of the schedule used for this run. Used by `animate.py` to plot the voltage timeline; useful for reproducing or analysing the run later.
-
----
-
-## Geometry workflow (Autodesk Fusion → STL)
-
-Each rigid body that you want as an independent voltage source or dielectric needs its own binary-STL export:
-
-1. In the canvas, right-click the component → **Find in Browser**.
-2. Expand to the **Body**, right-click → **Isolate**.
-3. Right-click the top-level assembly → **Save As Mesh**.
-4. **Format:** STL (Binary), **Unit Type:** Millimeter, **Structure:** One File, **Refinement:** High.
-5. Save to `stl/<body_name>.stl`.
-
-Bodies wired together (e.g. four rods on the same RF supply) get listed under the same electrode `name` in `geometry.yaml`. The voxelizer takes the union of their meshes.
-
-The simulation volume (`grid.bounds_mm`) must enclose every body. The grid spacing (`grid.dx_mm`) sets the trade-off between accuracy and memory: at 0.5 mm a 131×91×855 grid uses ~80 MB per electrode.
+The −y axis means the trigger fires on a downward-going (negative y) crossing: the droplet must be falling through y = 19 mm, not launched upward past it.
 
 ---
 
 ## Repository layout
 
 ```
-geometry.yaml          object inventory + grid (edit for a new geometry)
-experiment.py          particles, schedule, triggers, physics (edit for a new run)
-run.py                 pipeline entry point (thin wrapper around trapsim.run)
-requirements.txt       pip dependency (trapsim from GitHub)
-stl/                   STL bodies (gitignored; export from Fusion)
-legacy/                pre-refactor scripts (SIMION + early Python pipeline)
+rf_guide/
+  geometry.yaml     10-electrode RF guide + optical Paul trap geometry
+  experiment.py     nanosphere params, Epstein drag, loading triggers
+  run.py            trapsim.run shim
+  solver/           compiled solver + voxel masks (gitignored, auto-created)
+
+paul_trap/
+  geometry.yaml     4-electrode Paul trap geometry
+  experiment.py     ethanol droplet params, continuum drag, RF-on trigger
+  run.py            trapsim.run shim
+  solver/           compiled solver + voxel masks (gitignored, auto-created)
+
+stl/                all STL meshes shared by both simulations
+legacy/             original SIMION files and early Python pipeline (reference only)
+requirements.txt    pip dependency: trapsim[all] from GitHub
 ```
 
-The `trapsim` package is developed at [github.com/clarkehardy/trapsim](https://github.com/clarkehardy/trapsim). The C++ solver source and compiled binary live in `solver/` (auto-created on first `trapsim` run; gitignored).
+The `trapsim` package ([github.com/clarkehardy/trapsim](https://github.com/clarkehardy/trapsim)) provides the Laplace solver, integrator, schedule/trigger engine, and all visualization tools. This repo contains only the geometry and experiment definitions.
 
 ---
 
 ## Performance
 
-Reference: M-series Mac, 14 worker processes, 20 particles, 2·10⁵ µs simulated.
+Reference: M-series Mac, all CPUs, 20 particles.
 
-| Step | Wall time |
-|------|-----------|
-| Refine (10 electrodes, once per geometry edit) | ~3 minutes |
-| Fly (20 particles) | ~5 seconds |
-| Animate + visualize | a few seconds |
+| Step | RF guide | Paul trap |
+|---|---|---|
+| Refine (once per geometry edit) | ~3 min (10 electrodes) | ~1 min (4 electrodes) |
+| Fly | ~5 s | ~30 s |
+| Animate + visualize | a few seconds | a few seconds |
 
-Refine is the bottleneck; fly is fast because the Dormand-Prince adaptive stepper takes ~10× larger steps in the smooth field regions of the trap centre than a fixed dt would allow.
+Refine is the bottleneck; fly is fast because the Dormand-Prince adaptive stepper takes large steps in smooth field regions.
