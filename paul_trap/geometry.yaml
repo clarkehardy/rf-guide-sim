@@ -1,0 +1,49 @@
+# geometry.yaml  –  Trap geometry for trapsim.
+#
+# Edit this file when porting trapsim to a new trap geometry.  Every other
+# file in the pipeline reads electrode and dielectric names from here.
+#
+# Coordinate convention: Fusion world (mm).  The simulation grid is the
+# rectangular box defined by `grid.bounds_mm` below; the GEM offset used
+# internally by SIMION-compatible PA files is derived as -bounds_mm[*][0].
+#
+# Each electrode is one independent Laplace solve.  STLs listed under the
+# same electrode are wired together (single voltage source).  Electrodes
+# are assigned an integer id from 1..N in the order declared below, which
+# is the suffix on the output PA file (paulTrap.pa<id>).
+#
+# `color` is an optional [r, g, b] in 0..1.  `opacity` is optional 0..1.
+# Both are used only by trapsim.viz.
+
+grid:
+  dx_mm: 0.25
+  bounds_mm:
+    x: [-25.0,  40.0]
+    y: [ -8.0,  37.0]
+    z: [-132.0, -70.0]
+
+electrodes:
+  - name: rf_loading
+    stls:
+      - ../stl/PT_rod_TL.stl
+      - ../stl/PT_rod_BR.stl
+    color: [0.85, 0.20, 0.15]   # warm red — +RF
+  - name: rf_loading_inv
+    stls:
+      - ../stl/PT_rod_TR.stl
+      - ../stl/PT_rod_BL.stl
+    color: [0.20, 0.45, 0.80]   # steel blue — −RF
+  - name: endcap_load_U
+    stls: [../stl/endcap_load_U.stl]
+    color: [0.15, 0.70, 0.55]
+    opacity: 0.55
+  - name: endcap_load_D
+    stls: [../stl/endcap_load_D.stl]
+    color: [0.15, 0.70, 0.55]
+    opacity: 0.55
+
+dielectrics:
+  - name: electrode_holder
+    stl: ../stl/electrode_holder.stl
+    epsilon_r: 3.0
+    color: [0.50, 0.90, 0.95]
